@@ -1,0 +1,25 @@
+From 48dc92422761205e40b82eac38fcf7200c1012b1 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 14 May 2021 23:18:49 +0900
+Subject: [PATCH] Make native-comp-debug 0 for Windows
+
+---
+ lisp/emacs-lisp/comp.el | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lisp/emacs-lisp/comp.el b/lisp/emacs-lisp/comp.el
+index 3e7f17ef1c..85d0cea212 100644
+--- a/lisp/emacs-lisp/comp.el
++++ b/lisp/emacs-lisp/comp.el
+@@ -55,7 +55,7 @@ native-comp-speed
+   :safe #'integerp
+   :version "28.1")
+ 
+-(defcustom native-comp-debug (if (eq 'windows-nt system-type) 1 0)
++(defcustom native-comp-debug 0
+   "Debug level for native compilation, a number between 0 and 3.
+ This is intended for debugging the compiler itself.
+   0 no debug output.
+-- 
+2.31.1.windows.1
+

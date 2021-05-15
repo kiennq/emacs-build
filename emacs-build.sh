@@ -346,18 +346,30 @@ function dependency_filter () {
 
 check_mingw_architecture
 
+lib_inclusions="
+advapi32
+gcc\.a
+gcc_
+kernel32
+mingw32
+mingwex
+moldname
+msvcrt
+pthread
+shell32
+user32
+"
 # bin/.*((?<!emacs)(?<!emacsclient)(?<!emacsclientw)(?<!addpm)(?<!ctags)(?<!ebrowse)(?<!etags)).exe
 slim_exclusions="
 $build_type/bin
-$build_type/lib/lib((?!mingw32)(?!moldname)(?!mingwex)(?!msvcrt)(?!kernel32)(?!pthread)(?!advapi32)(?!shell32)(?!user32))
 .*bin/.*gett.*.exe$
 .*bin/msg.*\.exe$
 .*doc
 .*include
+.*lib.*/lib(`echo $lib_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*.a$
 etc
 lib/((?!emacs)(?!gcc))
 lib/.*\.exe
-lib/lib(?<!gccjit).*.a$
 share/((?!emacs)(?!icons)(?!info))
 usr/lib/cmake
 usr/lib/gettext

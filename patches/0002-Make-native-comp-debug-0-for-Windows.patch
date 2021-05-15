@@ -1,6 +1,6 @@
-From 48dc92422761205e40b82eac38fcf7200c1012b1 Mon Sep 17 00:00:00 2001
+From 8ab79a8b30cb55c7a41fe48bc7a6002bb62be44d Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
-Date: Fri, 14 May 2021 23:18:49 +0900
+Date: Sat, 15 May 2021 10:57:25 +0900
 Subject: [PATCH] Make native-comp-debug 0 for Windows
 
 ---

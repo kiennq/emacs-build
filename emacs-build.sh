@@ -359,14 +359,25 @@ pthread
 shell32
 user32
 "
-# bin/.*((?<!emacs)(?<!emacsclient)(?<!emacsclientw)(?<!addpm)(?<!ctags)(?<!ebrowse)(?<!etags)).exe
+
+exe_inclusions="
+$build_type-
+addpm
+as
+ctags
+ebrowse
+emacs
+emacsclient
+etags
+ld
+"
+
 slim_exclusions="
 $build_type/bin
-.*bin/.*gett.*.exe$
-.*bin/msg.*\.exe$
+.*bin/(`echo $exe_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*\.exe$
 .*doc
 .*include
-.*lib.*/lib(`echo $lib_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*.a$
+.*lib.*/lib(`echo $lib_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*\.a$
 etc
 lib/((?!emacs)(?!gcc))
 lib/.*\.exe

@@ -137,7 +137,7 @@ function emacs_dependencies ()
 function emacs_configure_build_dir ()
 {
     cd "$emacs_build_dir"
-    options="--disable-build-details --disable-silent-rules --without-dbus"
+    options="--disable-build-details --without-dbus"
     if test "$emacs_compress_files" = "no"; then
         options="$options --without-compress-install"
     fi
@@ -149,8 +149,8 @@ function emacs_configure_build_dir ()
         fi
     done
     echo Configuring Emacs with options
-    echo   $options
-    if "$emacs_source_dir/configure" "--prefix=$emacs_install_dir" $options; then
+    echo   "$emacs_source_dir/configure" "--prefix=$emacs_install_dir" CFLAGS="$CFLAGS" $options
+    if "$emacs_source_dir/configure" "--prefix=$emacs_install_dir" CFLAGS="$CFLAGS" $options; then
         echo Emacs configured
     else
         echo Configuration failed
@@ -415,6 +415,9 @@ emacs_build_build_dir="$emacs_build_root/build"
 emacs_build_install_dir="$emacs_build_root/pkg"
 emacs_build_zip_dir="$emacs_build_root/zips"
 emacs_strip_executables="no"
+
+CFLAGS="-O2"
+
 while test -n "$*"; do
     case $1 in
         --threads) shift; emacs_build_threads="$1";;

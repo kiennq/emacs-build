@@ -370,6 +370,7 @@ emacs
 emacsclient
 etags
 ld
+objdump
 "
 
 slim_exclusions="

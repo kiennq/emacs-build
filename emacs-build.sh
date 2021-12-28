@@ -417,7 +417,7 @@ emacs_build_install_dir="$emacs_build_root/pkg"
 emacs_build_zip_dir="$emacs_build_root/zips"
 emacs_strip_executables="no"
 
-CFLAGS="-O2"
+CFLAGS="-Ofast -fno-finite-math-only"
 
 while test -n "$*"; do
     case $1 in

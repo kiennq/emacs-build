@@ -50,3 +50,6 @@ Extensions:
    --aspell      Install Aspell spell checker.
    --mu          Mail search system and supporting Emacs mu4e libraries.
    --isync       Synchronize email from IMAP/POP to Maildir format (mbsync).
+
+Environment variables:
+  msys2_dir      Windows path to a preexisting MSY2 installation

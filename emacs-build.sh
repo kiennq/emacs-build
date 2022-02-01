@@ -165,7 +165,7 @@ function action0_clean ()
 
 function action0_clean_rest ()
 {
-    rm -rf "$emacs_build_git_dir" "$emacs_build_zip_dir"
+    rm -rf "$emacs_build_git_dir" "$emacs_build_zip_dir" msys2-upgraded.log
     exit 0
 }
 

@@ -374,13 +374,13 @@ objdump
 "
 
 slim_exclusions="
-$build_type/bin
+$build_type
 .*bin/(`echo $exe_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*\.exe$
 .*doc
 .*include
 .*lib.*/lib(`echo $lib_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*\.a$
 etc
-lib/((?!emacs)(?!gcc))
+lib/((?!emacs)(?!gcc)(?![^/]*\.(a|o)$))
 lib/.*\.exe
 share/((?!emacs)(?!icons)(?!info))
 usr/lib/cmake

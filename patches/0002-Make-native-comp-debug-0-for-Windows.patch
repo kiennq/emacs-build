@@ -3,6 +3,8 @@ From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Sat, 15 May 2021 10:57:25 +0900
 Subject: [PATCH] Make native-comp-debug 0 for Windows
 
+* lisp/emacs-lisp/comp.el (native-comp-debug): dont make debug native-comp for Windows
+
 ---
  lisp/emacs-lisp/comp.el | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

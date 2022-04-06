@@ -1,0 +1,27 @@
+From c2a41b37ab97435b85185a1404c9f19ec3b52e62 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 1 May 2022 12:14:31 +0900
+Subject: [PATCH] Fix empty minor-mode doc string causes error
+
+* lisp/emacs-lisp/easy-mmode.el (easy-mmode--mode-docstring): check for empty doc string before insert
+
+---
+ lisp/emacs-lisp/easy-mmode.el | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lisp/emacs-lisp/easy-mmode.el b/lisp/emacs-lisp/easy-mmode.el
+index 8a76eaf58c..9847888303 100644
+--- a/lisp/emacs-lisp/easy-mmode.el
++++ b/lisp/emacs-lisp/easy-mmode.el
+@@ -105,7 +105,7 @@ easy-mmode--mode-docstring
+       doc
+     ;; Compose a new doc string.
+     (with-temp-buffer
+-      (let ((lines (if doc
++      (let ((lines (if (and doc (not (string= doc "")))
+                        (string-lines doc)
+                      (list (format "Toggle %s on or off." mode-pretty-name)))))
+         ;; Insert the first line from the doc string.
+-- 
+2.35.1.windows.2
+

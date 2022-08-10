@@ -1,0 +1,40 @@
+From 538e8b02822a68a396a224e5c2bbf32032fa648a Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Mon, 15 Aug 2022 02:13:11 +0900
+Subject: [PATCH 4/4] Dont load tree-sitter when dump and check before use
+
+---
+ lisp/font-lock.el | 3 ++-
+ lisp/loadup.el    | 2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/lisp/font-lock.el b/lisp/font-lock.el
+index 0ece57147..ee53724d2 100644
+--- a/lisp/font-lock.el
++++ b/lisp/font-lock.el
+@@ -1775,7 +1775,8 @@ font-lock-value-in-major-mode
+ \\='jit-lock-mode if a tree-sitter grammar is unavailable.
+ If ALIST is not an alist, return ALIST."
+   (cond ((eq alist 'tree-sitter-lock-mode)
+-         (if (assq major-mode tree-sitter-mode-alist)
++         (if (and (boundp 'tree-sitter-mode-alist)
++                  (assq major-mode tree-sitter-mode-alist))
+              alist
+            'jit-lock-mode))
+         ((consp alist)
+diff --git a/lisp/loadup.el b/lisp/loadup.el
+index 7fa680523..9da37d75b 100644
+--- a/lisp/loadup.el
++++ b/lisp/loadup.el
+@@ -280,7 +280,7 @@ 'purify-flag
+ (load "replace")
+ (load "emacs-lisp/tabulated-list")
+ (load "buff-menu")
+-(load "tree-sitter")
++;; (load "tree-sitter")
+ 
+ (if (fboundp 'x-create-frame)
+     (progn
+-- 
+2.37.0.windows.1
+

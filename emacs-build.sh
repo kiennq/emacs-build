@@ -55,7 +55,7 @@ function write_features () {
     echo "Strip executables: $emacs_strip_executables"
     echo "Emacs features:"
     for f in $features; do echo "  --with-$f"; done
-    for f in $inactive; do echo " --without $f"; done
+    for f in $inactive; do echo " --without-$f"; done
 }
 
 function write_version_number ()
@@ -137,7 +137,7 @@ function emacs_dependencies ()
 function emacs_configure_build_dir ()
 {
     cd "$emacs_build_dir"
-    options="--disable-build-details --without-dbus"
+    options="--disable-build-details --without-dbus --without-pop"
     if test "$emacs_compress_files" = "no"; then
         options="$options --without-compress-install"
     fi
@@ -371,6 +371,7 @@ emacsclient
 etags
 ld
 objdump
+tree-sitter
 "
 
 slim_exclusions="

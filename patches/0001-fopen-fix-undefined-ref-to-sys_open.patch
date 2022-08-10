@@ -1,0 +1,25 @@
+From a4e4c8a143008d02eaa359c514ed2a1af84c6a1e Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sat, 13 Aug 2022 20:17:09 +0900
+Subject: [PATCH 1/4] fopen: fix undefined ref to sys_open
+
+---
+ lib/fopen.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/fopen.c b/lib/fopen.c
+index a5b3ae389..129d499e2 100644
+--- a/lib/fopen.c
++++ b/lib/fopen.c
+@@ -20,7 +20,7 @@
+    the system's <stdio.h> here, so that orig_fopen doesn't recurse to
+    rpl_fopen.  */
+ #define _GL_ALREADY_INCLUDING_STDIO_H
+-#include <config.h>
++/* #include <config.h> */
+ 
+ /* Get the original definition of fopen.  It might be defined as a macro.  */
+ #include <stdio.h>
+-- 
+2.37.0.windows.1
+

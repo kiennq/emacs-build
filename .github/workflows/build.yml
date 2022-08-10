@@ -39,10 +39,10 @@ jobs:
       - name: See free space
         run: Get-PSDrive
 
-      # This is the shortest job, but in this case it pulls all MSYS/MINGW64
+      # This is the shortest job, but in this case, it pulls all MSYS/MINGW64
       - name: Clone Emacs
         id: clone_repo
-        run: .\emacs-build.cmd --clone
+        run: .\emacs-build.cmd --clone --repo https://github.com/commercial-emacs/commercial-emacs.git
 
       - name: See free space
         run: Get-PSDrive
@@ -55,14 +55,14 @@ jobs:
       #   run: powershell -noprofile -Command Get-PSDrive
 
       - name: Build Emacs
-        run: .\emacs-build.cmd --nativecomp --slim --no-compress --with-rsvg --build
+        run: .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
 
       - name: See free space
         run: Get-PSDrive
 
       # Full emacs
       - name: Pack full emacs
-        run: .\emacs-build.cmd --nativecomp --slim --no-compress --with-rsvg --pack-all
+        run: .\emacs-build.cmd --slim --with-rsvg --pack-all
 
       - name: See free space
         run: Get-PSDrive

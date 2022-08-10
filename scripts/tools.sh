@@ -205,6 +205,7 @@ function prepare_build_dir ()
         fi
     else
         mkdir -p "$build_dir"
+        mkdir -p "$build_dir/lib/bitset"
     fi
 }
 

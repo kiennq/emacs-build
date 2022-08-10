@@ -1,0 +1,24 @@
+From 396978865dc101d595c56c598dea4d521a92867e Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Mon, 15 Aug 2022 00:56:38 +0900
+Subject: [PATCH 3/4] eldoc.el: add group for global-eldoc-mode
+
+---
+ lisp/emacs-lisp/eldoc.el | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/lisp/emacs-lisp/eldoc.el b/lisp/emacs-lisp/eldoc.el
+index 6b9332470..2182fad0f 100644
+--- a/lisp/emacs-lisp/eldoc.el
++++ b/lisp/emacs-lisp/eldoc.el
+@@ -225,6 +225,7 @@ eldoc-mode
+ (define-globalized-minor-mode global-eldoc-mode eldoc-mode turn-on-eldoc-mode
+   :initialize 'custom-initialize-delay
+   :init-value t
++  :group 'eldoc
+   ;; For `read--expression', the usual global mode mechanism of
+   ;; `change-major-mode-hook' runs in the minibuffer before
+   ;; `eldoc-documentation-strategy' is set, so `turn-on-eldoc-mode'
+-- 
+2.37.0.windows.1
+

@@ -167,11 +167,12 @@ function package_dependencies ()
         echo $slim_exclusions
         echo Files to package
         pacman -Ql $dependencies | cut -d ' ' -f 2 | sort | uniq \
-            | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g" | dependency_filter
+            | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g" | dependency_filter "$dependency_exclusions"
     fi
     echo Packing dependency files from root dir $mingw_dir
     pacman -Ql $dependencies | cut -d ' ' -f 2 | sort | uniq \
-        | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g" | dependency_filter | xargs zip -9v $zipfile
+        | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g" \
+        | dependency_filter "$dependency_exclusions" | xargs zip -9v $zipfile
 }
 
 function prepare_source_dir ()

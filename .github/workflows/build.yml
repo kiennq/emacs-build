@@ -55,14 +55,15 @@ jobs:
       #   run: powershell -noprofile -Command Get-PSDrive
 
       - name: Build Emacs
-        run: .\emacs-build.cmd --nativecomp --slim --no-compress --with-rsvg --build
+        run: .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
 
       - name: See free space
         run: Get-PSDrive
 
       # Full emacs
       - name: Pack full emacs
-        run: .\emacs-build.cmd --nativecomp --slim --no-compress --with-rsvg --pack-all
+        # Require --nativecomp and --with-* flags, else the deps will not be included properly
+        run: .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
 
       - name: See free space
         run: Get-PSDrive

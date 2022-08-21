@@ -140,6 +140,8 @@ function emacs_configure_build_dir ()
     options="--disable-build-details --without-dbus"
     if test "$emacs_compress_files" = "no"; then
         options="$options --without-compress-install"
+    else
+        options="$options --with-compress-install"
     fi
     for f in $all_features; do
         if echo $features | grep $f > /dev/null; then
@@ -205,11 +207,14 @@ function action2_install ()
         echo refusing to reinstall
     else
         rm -rf "$emacs_install_dir"
-        mkdir -p "$emacs_install_dir"
+        mkdir -p "$emacs_install_dir/bin"
         if test "$emacs_compress_files" = "yes"; then
             # If we compress files we need to install gzip no matter what
             # (even in pack-emacs)
-            (action3_gzip && cd "$emacs_install_dir" && unzip "$gzip_zip_file") || return -1
+            (ensure_packages gzip \
+                 && cp /usr/bin/gzip.exe $emacs_install_dir/bin/gzip.exe \
+                 && cp /usr/bin/msys-2.0.dll $emacs_install_dir/bin/msys-2.0.dll ) \
+                || return -1
         fi
         echo Installing Emacs into directory $emacs_install_dir
         # HACK!!! Somehow libgmp is not installed as part of the
@@ -280,7 +285,7 @@ function action5_package_all ()
         fi
     done
     rm -rf "$emacs_full_install_dir"
-    if cp -rf "$emacs_install_dir" "$emacs_full_install_dir"; then
+    if cp -rfp "$emacs_install_dir" "$emacs_full_install_dir"; then
         rm -f "$emacs_distfile"
         cd "$emacs_full_install_dir"
         for zipfile in "$emacs_depsfile" $emacs_extensions; do
@@ -293,9 +298,13 @@ function action5_package_all ()
             fi
         done
         emacs_build_strip_exes "$emacs_full_install_dir"
-        # find . -type f | sort | dependency_filter | xargs zip -9v "$emacs_distfile"
-        # this is easier and not encounter IO problems
-        zip -9vr "$emacs_distfile" ./*
+        if test "$emacs_compress_files" = "no"; then
+            xargs zip -9v "$emacs_distfile" ./*
+        else
+            # find . -type f | sort | dependency_filter > a.txt
+            find . -type f | sort | dependency_filter "$packing_slim_exclusion" \
+                | xargs zip -9v "$emacs_distfile"
+        fi
     fi
 }
 
@@ -337,10 +346,10 @@ function add_actions () {
 }
 
 function dependency_filter () {
-    if test -z "$dependency_exclusions"; then
+    if test -z "$1"; then
         cat -
     else
-        grep -P -v "^(`echo $slim_exclusions | sed 's,[ \n],|,g'`)" -
+        grep -P -v "^(`echo $1 | sed 's,[ \n],|,g'`)" -
     fi
 }
 
@@ -371,9 +380,10 @@ emacsclient
 etags
 ld
 objdump
+gzip
 "
 
-slim_exclusions="
+dependency_slim_exclusions="
 $build_type
 .*bin/(`echo $exe_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*\.exe$
 .*doc
@@ -382,7 +392,7 @@ $build_type
 etc
 lib/((?!emacs)(?!gcc)(?![^/]*\.(a|o)$))
 lib/.*\.exe
-share/((?!emacs)(?!icons)(?!info))
+.*share/((?!emacs)(?!icons))
 usr/lib/cmake
 usr/lib/gettext
 usr/lib/pkgconfig
@@ -393,6 +403,13 @@ usr/share/man.*
 usr/share/terminfo
 var
 "
+
+packing_slim_exclusion="
+.*share/((?!emacs)(?!icons))
+.*share/emacs/.*/lisp/leim
+.*share/emacs/.*/lisp/play
+"
+
 dependency_exclusions=""
 all_features=`feature_list | cut -f 1 -d ' '`
 features="$all_features"
@@ -477,13 +494,10 @@ if test "$emacs_nativecomp" = "yes"; then
     add_feature native-compilation
 fi
 if test "$emacs_slim_build" = "yes"; then
-    dependency_exclusions="$slim_exclusions"
+    dependency_exclusions="$dependency_slim_exclusions"
 fi
 if test -z "$emacs_branch"; then
     emacs_branch="master"
-fi
-if test "$emacs_compress_files" = yes; then
-    add_actions action3_gzip
 fi
 actions=`unique_list $actions`
 if test -z "$actions"; then

@@ -32,7 +32,6 @@
 . scripts/pdf-tools.sh
 . scripts/aspell.sh
 . scripts/hunspell.sh
-. scripts/gzip.sh
 . scripts/msys2_extra.sh
 . scripts/gnutls.sh
 
@@ -212,8 +211,7 @@ function action2_install ()
             # If we compress files we need to install gzip no matter what
             # (even in pack-emacs)
             (ensure_packages gzip \
-                 && cp /usr/bin/gzip.exe $emacs_install_dir/bin/gzip.exe \
-                 && cp /usr/bin/msys-2.0.dll $emacs_install_dir/bin/msys-2.0.dll ) \
+                 && cp_bindeps_to "$emacs_install_dir/bin" gzip.exe) \
                 || return -1
         fi
         echo Installing Emacs into directory $emacs_install_dir
@@ -469,6 +467,7 @@ while test -n "$*"; do
         --deps) add_actions action1_ensure_packages action3_package_deps;;
         --pack-emacs) add_actions action2_install action4_package_emacs;;
         --pack-all) add_actions action1_ensure_packages action3_package_deps action2_install action5_package_all;;
+        # --pack-all) add_actions action1_ensure_packages action2_install;;
 
         --pdf-tools) add_actions action2_install action3_pdf_tools;;
         --mu) add_actions action2_install action3_mu;;

@@ -152,6 +152,17 @@ function ensure_packages ()
     fi
 }
 
+function cp_bindeps_to ()
+{
+    local dest="$1"
+    local bins="${@:2}"
+    echo Copying $bins to $dest with dependencies
+    echo $bins | xargs -n1 | xargs which | xargs -I{} cp -pf {} $dest/
+    echo $bins | xargs -n1 | xargs which | xargs ldd \
+        | awk -F' ' '!/ \/c\//{print $3}' \
+        | xargs -I{} cp -pf {} $dest/
+}
+
 function package_dependencies ()
 {
     local zipfile="$1"

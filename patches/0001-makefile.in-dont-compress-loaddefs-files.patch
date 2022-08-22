@@ -1,0 +1,25 @@
+From 5b48a7426c9e427a14226ae76ac0ea7661d10371 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Mon, 22 Aug 2022 16:18:58 +0900
+Subject: [PATCH] makefile.in: dont compress loaddefs files
+
+---
+ Makefile.in | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile.in b/Makefile.in
+index 78103f897..f1ec3cf49 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -671,7 +671,7 @@ install-arch-indep:
+ 	[ -z "${GZIP_PROG}" ] || { \
+ 	  echo "Compressing *.el etc. ..." && \
+ 	  cd "$(DESTDIR)${lispdir}" && \
+-	  for f in `find . -name "*.elc" -print | sed 's/.elc$$/.el/'`; do \
++	  for f in `find . -name "*.elc" ! -name "*loaddefs.elc" -print | sed 's/.elc$$/.el/'`; do \
+ 	    ${GZIP_PROG} -9n "$$f"; \
+ 	  done; \
+ 	  ${GZIP_PROG} -9n "../etc/publicsuffix.txt"; \
+-- 
+2.37.0.windows.1
+

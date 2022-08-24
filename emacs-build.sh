@@ -308,18 +308,19 @@ function action5_package_all ()
 
 function feature_list () {
     cat <<EOF
-xpm mingw-xpm-nox
-jpeg mingw-libjpeg-turbo
-tiff mingw-libtiff
-gif mingw-giflib
-png mingw-libpng
-rsvg mingw-librsvg
 cairo mingw-cairo
+gif mingw-giflib
+gnutls mingw-gnutls
 harfbuzz mingw-harfbuzz
+jpeg mingw-libjpeg-turbo
 json mingw-jansson
 lcms2 mingw-lcms2
+png mingw-libpng
+rsvg mingw-librsvg
+tiff mingw-libtiff
+tree-sitter mingw-tree-sitter
 xml2 mingw-libxml2
-gnutls mingw-gnutls
+xpm mingw-xpm-nox
 zlib mingw-zlib
 EOF
     if test "$emacs_nativecomp" = yes; then
@@ -390,7 +391,7 @@ $build_type
 etc
 lib/((?!emacs)(?!gcc)(?![^/]*\.(a|o)$))
 lib/.*\.exe
-.*share/((?!emacs)(?!icons))
+.*share/((?!licenses))
 usr/lib/cmake
 usr/lib/gettext
 usr/lib/pkgconfig
@@ -403,7 +404,7 @@ var
 "
 
 packing_slim_exclusion="
-.*share/((?!emacs)(?!icons))
+.*share/((?!emacs)(?!icons)(?!info)(?!licenses))
 .*share/emacs/.*/lisp/leim
 .*share/emacs/.*/lisp/play
 "

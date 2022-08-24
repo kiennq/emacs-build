@@ -142,6 +142,11 @@ function emacs_configure_build_dir ()
     else
         options="$options --with-compress-install"
     fi
+
+    if test "$emacs_slim_build" = "yes"; then
+        options="$options--with-small-ja-dic"
+    fi
+
     for f in $all_features; do
         if echo $features | grep $f > /dev/null; then
             options="--with-$f $options"

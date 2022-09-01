@@ -80,8 +80,8 @@ jobs:
         id: create_release
         uses: ncipollo/release-action@v1
         with:
-          tag: v0.${{ steps.clone_repo.outputs.EMACS_PKG_VERSION }}
-          name: emacs_0.${{ steps.clone_repo.outputs.EMACS_PKG_VERSION }}
+          tag: v29.0.${{ github.run_number }}.${{ steps.clone_repo.outputs.EMACS_COMMIT }}
+          name: emacs_29.0.${{ github.run_number }}.${{ steps.clone_repo.outputs.EMACS_COMMIT }}
           draft: false
           prerelease: false
           artifactErrorsFailBuild: true

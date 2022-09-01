@@ -24,7 +24,7 @@ function git_version ()
     local source_dir="$1"
     pushd . >/dev/null
     cd $source_dir
-    echo `TZ=GMT date +%y%m%d`.`git rev-parse --short HEAD`
+    echo `git rev-parse --short HEAD`
     popd >/dev/null
 }
 

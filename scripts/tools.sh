@@ -24,7 +24,7 @@ function git_version ()
     local source_dir="$1"
     pushd . >/dev/null
     cd $source_dir
-    echo `git rev-parse --short HEAD`
+    echo `git rev-parse --short=7 HEAD`
     popd >/dev/null
 }
 
@@ -36,9 +36,14 @@ function clone_repo ()
     local repo="$2"
     local source_dir="$3"
     local dirname="$4"
+    local depth="$5"
     if test -z $dirname; then
         dirname=`git_branch_name_to_file_name $branch`
     fi
+    if test $depth; then
+        depth="--depth $depth"
+    fi
+
     pushd . >/dev/null
     local error
     if test -d "$source_dir"; then
@@ -51,7 +56,7 @@ function clone_repo ()
         fi
     else
         echo Cloning Emacs repository $repo.
-        git clone --filter=tree:0 -b $branch "$repo" "$source_dir" && \
+        git clone --filter=tree:0 $depth -b $branch "$repo" "$source_dir" && \
             cd "$source_dir" && git config pull.rebase false
         error=$?
         if test $? != 0; then

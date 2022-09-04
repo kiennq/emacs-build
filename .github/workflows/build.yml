@@ -4,88 +4,111 @@ name: build
 
 # Controls when the action will run.
 on:
-  # Triggers the workflow on push or pull request events but only for the main branch
-  # JJGR: Change back to main from cicd
-  # tag:
-  # Allows you to run this workflow manually from the Actions tab
   schedule:
     - cron: "0 0 1 * *" # monthly
+  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
-    runs-on: windows-latest
-    env:
-      MSYS2_DIR: C:\msys64
-
     # Matrix strategy from
     # https://github.com/msys2/MINGW-packages/blob/master/.github/workflows/main.yml
     strategy:
+      fail-fast: false
       matrix:
-        include: [{ msystem: MINGW64, arch: x86_64 }]
+        include:
+          - os: windows-2019
+            shell: powershell
+            arch: x86_64
+          - os: ubuntu-22.04
+            shell: bash
+
+    # The type of runner that the job will run on
+    runs-on: ${{ matrix.os }}
+    env:
+      MSYS2_DIR: C:\msys64
+      EMACS_REPO: https://github.com/kiennq/emacs.git
 
     defaults:
       run:
-        shell: powershell
+        shell: ${{ matrix.shell }}
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v2
 
-      - name: See free space
-        run: Get-PSDrive
-
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64
       - name: Clone Emacs
-        id: clone_repo
-        run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git
+        if: runner.os == 'Windows'
+        id: clone_repo_w
+        run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git --depth 1
 
-      - name: See free space
-        run: Get-PSDrive
+      - name: Clone Emacs
+        if: runner.os != 'Windows'
+        id: clone_repo_u
+        run: |
+          mkdir -p ./git/emacs
+          cd ./git/emacs/
+          git clone --depth 1 $EMACS_REPO .
+          echo "::set-output name=EMACS_COMMIT::`git rev-parse --short=7 HEAD`"
 
-      # Now download dependencies
-      # - name: Collect dependencies
-      #   run: .\emacs-build.cmd --deps
+      - name: Set package version
+        if: runner.os == 'Windows'
+        run: echo PKG_VER=29.0.${{ github.run_number }}.${{ steps.clone_repo_w.outputs.EMACS_COMMIT }} >> $env:GITHUB_ENV
 
-      # - name: See free space
-      #   run: powershell -noprofile -Command Get-PSDrive
+      - name: Set package version
+        if: runner.os != 'Windows'
+        run: echo PKG_VER=29.0.${{ github.run_number }}.${{ steps.clone_repo_u.outputs.EMACS_COMMIT }} >> $GITHUB_ENV
 
-      - name: Build Emacs
-        run: .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
-
-      - name: See free space
-        run: Get-PSDrive
-
-      # Full emacs
-      - name: Pack full emacs
+      - name: Build and packEmacs
+        if: runner.os == 'Windows'
         # Require --nativecomp and --with-* flags, else the deps will not be included properly
-        run: .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
+        run: |
+          .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
+          .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
 
-      - name: See free space
-        run: Get-PSDrive
+      - name: Build and pack Emacs
+        if: runner.os != 'Windows'
+        run: |
+          cd ./git/emacs/
+          cp -p ../../emacs-build-unix.sh .
+          chmod 755 ./emacs-build-unix.sh
+          ./emacs-build-unix.sh --version $PKG_VER
+          mkdir -p ../../zips
+          mv *.deb ../../zips/
 
       # Upload everything
       - name: Upload binaries
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ matrix.msystem }}-packages
+          name: emacs-packages
           path: zips/*
+          if-no-files-found: error
+
+    outputs:
+      version: ${{ env.PKG_VER }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v2
+        with:
+          name: emacs-packages
+      - run: ls -R
 
       # Create release
       - name: Create Release
         id: create_release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v1
         with:
-          tag: v29.0.${{ github.run_number }}.${{ steps.clone_repo.outputs.EMACS_COMMIT }}
-          name: emacs_29.0.${{ github.run_number }}.${{ steps.clone_repo.outputs.EMACS_COMMIT }}
-          draft: false
+          tag_name: v${{ needs.build.outputs.version }}
+          name: emacs_${{ needs.build.outputs.version }}
           prerelease: false
-          artifactErrorsFailBuild: true
-          artifacts: |
-            zips/emacs-master-${{ matrix.arch }}-full.zip
-          artifactContentType: application/zip
-          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            *-full.zip
+            *.deb

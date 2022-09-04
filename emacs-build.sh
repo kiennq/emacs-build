@@ -177,7 +177,7 @@ function action0_clean_rest ()
 
 function action0_clone ()
 {
-    clone_repo "$emacs_branch" "$emacs_repo" "$emacs_source_dir" "$emacs_branch_name"
+    clone_repo "$emacs_branch" "$emacs_repo" "$emacs_source_dir" "$emacs_branch_name" "$emacs_depth"
     if test "$emacs_apply_patches" = "yes"; then
         apply_patches "$emacs_source_dir" || true
     fi
@@ -417,7 +417,6 @@ packing_slim_exclusion="
 dependency_exclusions=""
 all_features=`feature_list | cut -f 1 -d ' '`
 features="$all_features"
-emacs_branch=""
 
 actions=""
 do_clean=""
@@ -431,6 +430,8 @@ emacs_apply_patches=yes
 # This is needed for pacman to return the right text
 export LANG=C
 emacs_repo=https://github.com/emacs-mirror/emacs.git
+emacs_branch=""
+emacs_depth=""
 emacs_build_root=`pwd`
 emacs_build_git_dir="$emacs_build_root/git"
 emacs_build_build_dir="$emacs_build_root/build"
@@ -438,13 +439,14 @@ emacs_build_install_dir="$emacs_build_root/pkg"
 emacs_build_zip_dir="$emacs_build_root/zips"
 emacs_strip_executables="no"
 
-CFLAGS="-Ofast -fno-finite-math-only"
+CFLAGS="-g -Ofast -fno-finite-math-only"
 
 while test -n "$*"; do
     case $1 in
         --threads) shift; emacs_build_threads="$1";;
         --repo) shift; emacs_repo="$1";;
         --branch) shift; emacs_branch="$1";;
+        --depth) shift; emacs_depth="$1";;
         --no-patches) emacs_apply_patches=no;;
         --with-all) add_all_features;;
         --without-*) delete_feature `echo $1 | sed -e 's,--without-,,'`;;

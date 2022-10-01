@@ -42,26 +42,26 @@ jobs:
 
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64
       - name: Clone Emacs
-        if: runner.os == 'Windows'
         id: clone_repo_w
+        if: runner.os == 'Windows'
         run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git --depth 1
+
+      - if: runner.os == 'Windows'
+        run: |
+          echo "EMACS_COMMIT=${{ steps.clone_repo_w.outputs.EMACS_COMMIT }}" >> $env:GITHUB_ENV
 
       - name: Clone Emacs
         if: runner.os != 'Windows'
-        id: clone_repo_u
         run: |
           mkdir -p ./git/emacs
           cd ./git/emacs/
           git clone --depth 1 $EMACS_REPO .
-          echo "::set-output name=EMACS_COMMIT::`git rev-parse --short=7 HEAD`"
+          echo "EMACS_COMMIT=`date +'%Y%m%d'`.`git rev-parse --short=7 HEAD`" >> $GITHUB_ENV
 
       - name: Set package version
-        if: runner.os == 'Windows'
-        run: echo PKG_VER=29.0.${{ github.run_number }}.${{ steps.clone_repo_w.outputs.EMACS_COMMIT }} >> $env:GITHUB_ENV
-
-      - name: Set package version
-        if: runner.os != 'Windows'
-        run: echo PKG_VER=29.0.${{ github.run_number }}.${{ steps.clone_repo_u.outputs.EMACS_COMMIT }} >> $GITHUB_ENV
+        id: get_version
+        run: |
+          echo "::set-output name=ver::29.${{ github.run_number }}.${{ env.EMACS_COMMIT }}"
 
       - name: Build and packEmacs
         if: runner.os == 'Windows'
@@ -73,12 +73,9 @@ jobs:
       - name: Build and pack Emacs
         if: runner.os != 'Windows'
         run: |
-          cd ./git/emacs/
-          cp -p ../../emacs-build-unix.sh .
           chmod 755 ./emacs-build-unix.sh
-          ./emacs-build-unix.sh --version $PKG_VER
-          mkdir -p ../../zips
-          mv *.deb ../../zips/
+          mkdir -p ./zips
+          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ steps.get_version.outputs.ver }} -d ./zips
 
       # Upload everything
       - name: Upload binaries
@@ -89,7 +86,7 @@ jobs:
           if-no-files-found: error
 
     outputs:
-      version: ${{ env.PKG_VER }}
+      version: ${{ steps.get_version.outputs.ver }}
 
   publish:
     needs: build

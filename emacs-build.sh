@@ -197,6 +197,7 @@ function action1_ensure_packages ()
 
 function action2_build ()
 {
+    echo start building
     rm -f "$emacs_install_dir/bin/emacs.exe"
     if prepare_source_dir $emacs_source_dir \
             && prepare_build_dir $emacs_build_dir && emacs_configure_build_dir; then

@@ -28,8 +28,8 @@ else
 
 if (!(Test-Path "$msys2_dir\msys2_shell.cmd"))
 {
-    $inst_url = 'https://github.com/msys2/msys2-installer/releases/download/2021-04-19/msys2-base-x86_64-20210419.sfx.exe'
-    $installer_checksum = '1f2cfd8e13b0382096e53ead6fd52d0b656a1f81e1b5d82f44cb4ce8ab68755e'
+    $inst_url = 'https://github.com/msys2/msys2-installer/releases/download/2022-09-04/msys2-base-x86_64-20220904.sfx.exe'
+    $installer_checksum = 'BB92718BCE932398A2E236D60C53EF35C3BC9A96999A26DD5814E66A2F4BAF1F'
     $installer = $msys2_dir + '\msys2-base.exe'
 
     if (!(Test-Path $installer))
@@ -70,9 +70,8 @@ if (!(Test-Path "$emacs_build_dir\msys2-upgraded.log"))
     Set-Location "$emacs_build_dir"
 
     # Final upgrade
-    Write-Output "Final upgrade"
-    .\scripts\msys2.cmd -c 'pacman --noprogressbar --noconfirm -Syuu'
-
+    # Write-Output "Final upgrade"
+    # .\scripts\msys2.cmd -c 'pacman --noprogressbar --noconfirm -Syuu'
     # Install packages required by emacs-build
     Write-Output "Install essential packages"
     .\scripts\msys2.cmd -c 'pacman --noprogressbar --needed --noconfirm -S git unzip zip base-devel mingw-w64-x86_64-toolchain autoconf automake'

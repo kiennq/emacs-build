@@ -181,7 +181,10 @@ function action0_clone ()
     if test "$emacs_apply_patches" = "yes"; then
         apply_patches "$emacs_source_dir" || true
     fi
-    echo "::set-output name=EMACS_COMMIT::`git_version $emacs_source_dir`"
+
+    if test $GITHUB_ENV; then
+        echo "EMACS_COMMIT=`git_version $emacs_source_dir`" >> $GITHUB_ENV
+    fi
 }
 
 function action1_ensure_packages ()

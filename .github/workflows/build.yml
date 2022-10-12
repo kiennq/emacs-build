@@ -42,13 +42,8 @@ jobs:
 
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64
       - name: Clone Emacs
-        id: clone_repo_w
         if: runner.os == 'Windows'
         run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git --depth 1
-
-      - if: runner.os == 'Windows'
-        run: |
-          echo "EMACS_COMMIT=${{ steps.clone_repo_w.outputs.EMACS_COMMIT }}" >> $env:GITHUB_ENV
 
       - name: Clone Emacs
         if: runner.os != 'Windows'
@@ -59,11 +54,16 @@ jobs:
           echo "EMACS_COMMIT=`date +'%Y%m%d'`.`git rev-parse --short=7 HEAD`" >> $GITHUB_ENV
 
       - name: Set package version
-        id: get_version
+        if: runner.os == 'Windows'
         run: |
-          echo "::set-output name=ver::29.${{ github.run_number }}.${{ env.EMACS_COMMIT }}"
+          echo "EMACS_VER=29.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $env:GITHUB_ENV
 
-      - name: Build and packEmacs
+      - name: Set package version
+        if: runner.os != 'Windows'
+        run: |
+          echo "EMACS_VER=29.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $GITHUB_ENV
+
+      - name: Build and pack Emacs
         if: runner.os == 'Windows'
         # Require --nativecomp and --with-* flags, else the deps will not be included properly
         run: |
@@ -75,7 +75,7 @@ jobs:
         run: |
           chmod 755 ./emacs-build-unix.sh
           mkdir -p ./zips
-          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ steps.get_version.outputs.ver }} -d ./zips
+          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ env.EMACS_VER }} -d ./zips
 
       # Upload everything
       - name: Upload binaries
@@ -86,7 +86,7 @@ jobs:
           if-no-files-found: error
 
     outputs:
-      version: ${{ steps.get_version.outputs.ver }}
+      version: ${{ env.EMACS_VER }}
 
   publish:
     needs: build

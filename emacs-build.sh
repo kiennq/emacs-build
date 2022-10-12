@@ -439,7 +439,7 @@ emacs_build_install_dir="$emacs_build_root/pkg"
 emacs_build_zip_dir="$emacs_build_root/zips"
 emacs_strip_executables="no"
 
-CFLAGS="-g -Ofast -fno-finite-math-only"
+CFLAGS="-Ofast -fno-finite-math-only -fomit-frame-pointer"
 
 while test -n "$*"; do
     case $1 in

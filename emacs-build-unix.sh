@@ -52,7 +52,7 @@ echo arch=$arch
 echo deb_dir=$deb_dir
 # echo pkg_name=$pkg_name
 
-./configure CFLAGS="-O3 -mtune=native -march=native -fomit-frame-pointer" \
+./configure CFLAGS="-Ofast -fno-finite-math-only -fomit-frame-pointer" \
             --prefix=/usr/local/ \
             --with-included-regex --with-native-compilation \
             --with-small-ja-dic --with-pgtk --with-xwidgets $emacs_build_flags \

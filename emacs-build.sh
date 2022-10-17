@@ -144,7 +144,7 @@ function emacs_configure_build_dir ()
     fi
 
     if test "$emacs_slim_build" = "yes"; then
-        options="$options--with-small-ja-dic"
+        options="$options --with-small-ja-dic"
     fi
 
     for f in $all_features; do
@@ -429,7 +429,7 @@ emacs_compress_files=no
 emacs_build_version=0.4
 emacs_slim_build=no
 emacs_nativecomp=no
-emacs_build_threads=`nproc`
+emacs_build_threads=$((`nproc`*2))
 emacs_apply_patches=yes
 # This is needed for pacman to return the right text
 export LANG=C

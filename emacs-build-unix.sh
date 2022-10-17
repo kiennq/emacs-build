@@ -60,12 +60,17 @@ echo deb_dir=$deb_dir
             --without-pop --without-mailutils --without-gsettings \
             --with-all
 
-make -j$(($(nproc) * 2))
-# NOTE: use `checkinstall` will make `make install` hangs.
-# See https://github.com/emacs-ng/emacs-ng/issues/364
+echo "Initial make"
+make -j$((`nproc` * 2))
+if [ $? -ne 0 ]; then
+    exit -1
+fi
+
+echo "Make install"
 make install-strip DESTDIR=$deb_dir
 
 # create control file
+echo "Create deb package"
 mkdir -p $deb_dir/DEBIAN
 
 cat > $deb_dir/DEBIAN/control << EOF

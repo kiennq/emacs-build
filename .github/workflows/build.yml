@@ -54,14 +54,9 @@ jobs:
           echo "EMACS_COMMIT=`date +'%Y%m%d'`.`git rev-parse --short=7 HEAD`" >> $GITHUB_ENV
 
       - name: Set package version
-        if: runner.os == 'Windows'
-        run: |
-          echo "EMACS_VER=29.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $env:GITHUB_ENV
-
-      - name: Set package version
-        if: runner.os != 'Windows'
         run: |
           echo "EMACS_VER=29.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $GITHUB_ENV
+        shell: bash
 
       - name: Build and pack Emacs
         if: runner.os == 'Windows'

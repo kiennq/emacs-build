@@ -184,6 +184,7 @@ function action0_clone ()
 
     if test $GITHUB_ENV; then
         echo "EMACS_COMMIT=`git_version $emacs_source_dir`" >> $GITHUB_ENV
+        echo "EMACS_MAJOR_VER=`cat $emacs_source_dir/configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`" >> $GITHUB_ENV
     fi
 }
 

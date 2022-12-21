@@ -52,10 +52,11 @@ jobs:
           cd ./git/emacs/
           git clone --depth 1 $EMACS_REPO .
           echo "EMACS_COMMIT=`date +'%Y%m%d'`.`git rev-parse --short=7 HEAD`" >> $GITHUB_ENV
+          echo "EMACS_MAJOR_VER=`cat configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`" >> $GITHUB_ENV
 
       - name: Set package version
         run: |
-          echo "EMACS_VER=29.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $GITHUB_ENV
+          echo "EMACS_VER=${{ env.EMACS_MAJOR_VER }}.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $GITHUB_ENV
         shell: bash
 
       - name: Build and pack Emacs

@@ -29,7 +29,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MSYS2_DIR: C:\msys64
-      EMACS_REPO: https://github.com/kiennq/emacs.git
+      EMACS_REPO: https://github.com/emacs-mirror/emacs.git
 
     defaults:
       run:
@@ -48,7 +48,7 @@ jobs:
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64
       - name: Clone Emacs
         if: runner.os == 'Windows'
-        run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git --depth 1
+        run: .\emacs-build.cmd --clone --repo https://github.com/emacs-mirror/emacs.git --depth 1
 
       - name: Clone Emacs
         if: runner.os != 'Windows'

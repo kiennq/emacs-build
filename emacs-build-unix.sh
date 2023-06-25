@@ -36,7 +36,8 @@ render_deps=",librsvg2-2,libxpm4,libjpeg9,libgif7,libpng16-16,libgtk-3-0,libharf
 
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/ppa
 sudo apt update
-sudo apt install -y dpkg-dev autoconf make texinfo $render_libs libgnutls28-dev \
+sudo apt install -y dpkg-dev autoconf autogen automake automake-wrapper diffutils git guile libgc libguile libltdl libunistring  make mingw-binutils \
+     texinfo $render_libs libgnutls28-dev \
      libncurses5-dev libsystemd-dev libjansson-dev libgccjit-10-dev g++-10 gcc-10 libxt-dev \
      libtree-sitter-dev libwebkit2gtk-4.0-dev curl
 export CC=/usr/bin/gcc-10 CXX=/usr/bin/gcc-10

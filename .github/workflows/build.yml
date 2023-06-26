@@ -66,8 +66,8 @@ jobs:
         if: runner.os == 'Windows'
         # Require --nativecomp and --with-* flags, else the deps will not be included properly
         run: |
-          .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install -without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --build
-          .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install -without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --pack-all
+          .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --build
+          .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --pack-all
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'

@@ -318,19 +318,38 @@ function action5_package_all ()
 
 function feature_list () {
     cat <<EOF
+bzip2 mingw-bzip2
 cairo mingw-cairo
+crt-git mingw-crt-git
+dbus mingw-expat mingw-dbus mingw-expat
 gif mingw-giflib
+glib2 mingw-glib2
+gmp mingw-gmp
 gnutls mingw-gnutls
 harfbuzz mingw-harfbuzz
+headers-git mingw-headers-git
+imagemagick mingw-imagemagick
 jpeg mingw-libjpeg-turbo
-json mingw-jansson
+isl mingw-isl
+jansson mingw-jansson
 lcms2 mingw-lcms2
-png mingw-libpng
-rsvg mingw-librsvg
-tiff mingw-libtiff
+libffi mingw-libffi
+libiconv mingw-libiconv
+libjpeg-turbo mingw-libjpeg-turbo
+libpng mingw-libpng
+librsvg mingw-librsvg
+libtiff mingw-libtiff
+libwinpthread-git mingw-libwinpthread-git
+libxml2 mingw-libxml2
+mpc mingw-mpc
+mpfr mingw-mpfr
+pango mingw-pango
+pixman mingw-pixman
 tree-sitter mingw-tree-sitter
+winpthreads mingw-winpthreads
 xml2 mingw-libxml2
-xpm mingw-xpm-nox
+xpm-nox mingw-xpm-nox
+xz mingw-xz
 zlib mingw-zlib
 EOF
     if test "$emacs_nativecomp" = yes; then

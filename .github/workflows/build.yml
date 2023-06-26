@@ -20,14 +20,13 @@ jobs:
           - os: windows-2022
             shell: powershell
             arch: x86_64
-          - os: ubuntu-22.04
-            shell: bash
 
     # The type of runner that the job will run on
     runs-on: ${{ matrix.os }}
     env:
       MSYS2_DIR: C:\msys64
-      EMACS_REPO: https://github.com/kiennq/emacs.git
+      EMACS_REPO: https://git.savannah.gnu.org/git/emacs.git
+      EMACS_BRANCH: emacs-29
 
     defaults:
       run:

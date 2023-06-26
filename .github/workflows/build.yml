@@ -27,6 +27,7 @@ jobs:
       MSYS2_DIR: C:\msys64
       EMACS_REPO: https://git.savannah.gnu.org/git/emacs.git
       EMACS_BRANCH: emacs-29
+      CFLAGS: -O3 -fno-math-errno -funsafe-math-optimizations -fno-finite-math-only -fno-trapping-math -freciprocal-math -fno-rounding-math -fno-signaling-nans -fassociative-math -fno-signed-zeros -frename-registers -funroll-loops -mtune=native -march=native -fomit-frame-pointer
 
     defaults:
       run:
@@ -65,8 +66,8 @@ jobs:
         if: runner.os == 'Windows'
         # Require --nativecomp and --with-* flags, else the deps will not be included properly
         run: |
-          .\emacs-build.cmd --branch emacs-29 --nativecomp --with-all --build
-          .\emacs-build.cmd --branch emacs-29 --nativecomp --with-all --pack-all
+          .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install -without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --build
+          .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install -without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --pack-all
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'

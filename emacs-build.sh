@@ -331,14 +331,15 @@ headers-git mingw-headers-git
 imagemagick mingw-imagemagick
 jpeg mingw-libjpeg-turbo
 isl mingw-isl
-jansson mingw-jansson
+json mingw-jansson
 lcms2 mingw-lcms2
 libffi mingw-libffi
+libgccjit mingw-libgccjit
 libiconv mingw-libiconv
 libjpeg-turbo mingw-libjpeg-turbo
-libpng mingw-libpng
-librsvg mingw-librsvg
-libtiff mingw-libtiff
+png mingw-libpng
+rsvg mingw-librsvg
+tiff mingw-libtiff
 libwinpthread-git mingw-libwinpthread-git
 libxml2 mingw-libxml2
 mpc mingw-mpc
@@ -348,7 +349,7 @@ pixman mingw-pixman
 tree-sitter mingw-tree-sitter
 winpthreads mingw-winpthreads
 xml2 mingw-libxml2
-xpm-nox mingw-xpm-nox
+xpm mingw-xpm-nox
 xz mingw-xz
 zlib mingw-zlib
 EOF

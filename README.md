@@ -1,7 +1,10 @@
 # My docs
 Commands to build locally. End up with `emacs-emacs-29-x86_64-full.zip`
 
+If you have msys installed set location to `msys2_dir`.
+
 ```
+set msys2_dir=c:\msys64
 .\emacs-build.cmd --clone --repo https://git.savannah.gnu.org/git/emacs.git --branch emacs-29 --depth 1
 .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --build
 .\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --pack-all

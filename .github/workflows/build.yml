@@ -61,10 +61,14 @@ jobs:
 
       - name: Build and pack Emacs
         if: runner.os == 'Windows'
-        # Require --nativecomp and --with-* flags, else the deps will not be included properly
-        run: |
-          .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
-          .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
+        uses: Wandalen/wretry.action@master
+        with:
+          # Require --nativecomp and --with-* flags, else the deps will not be included properly
+          command: |
+            .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
+            .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
+          attempt_limit: 3
+          attempt_delay: 2000
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'

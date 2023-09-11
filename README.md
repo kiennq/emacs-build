@@ -5,12 +5,13 @@ If you have msys installed set location to `msys2_dir`.
 
 ```
 set msys2_dir=c:\msys64
-.\emacs-build.cmd --clone --repo https://git.savannah.gnu.org/git/emacs.git --branch emacs-29 --depth 1
-.\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --build
-.\emacs-build.cmd --branch emacs-29 --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --pack-all
+set emacs_branch=master
+.\emacs-build.cmd --clone --repo https://git.savannah.gnu.org/git/emacs.git --branch %emacs_branch% --depth 1
+.\emacs-build.cmd --branch %emacs_branch% --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --build
+.\emacs-build.cmd --branch %emacs_branch% --nativecomp --slim --without-pop --without-imagemagick --without-compress-install --without-dbus --with-gnutls --with-json --with-tree-sitter --without-gconf --with-rsvg --without-gsettings --with-mailutils --with-modules  --with-xml2 --with-wide-int --pack-all
 ```
 
-CFLAGS contain `-mtune=native -march=native` so using github workflow to build remotely won't optimize for my Ryzen9.  Instead I should replace with `-mtune=znver2 -march=znver2`
+CFLAGS contain `-mtune=native -march=native` so using github workflow to build remotely won't optimize for my Ryzen9.  Instead I should replace with `-mtune=znver2 -march=znver2`.  For laptop use `skylake`.
 
 # emacs-build v0.4
 

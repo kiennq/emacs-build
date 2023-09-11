@@ -464,7 +464,7 @@ emacs_build_install_dir="$emacs_build_root/pkg"
 emacs_build_zip_dir="$emacs_build_root/zips"
 emacs_strip_executables="no"
 
-CFLAGS="-O3 -fno-math-errno -funsafe-math-optimizations -fno-finite-math-only -fno-trapping-math -freciprocal-math -fno-rounding-math -fno-signaling-nans -fassociative-math -fno-signed-zeros -frename-registers -funroll-loops -mtune=native -march=native -fomit-frame-pointer"
+CFLAGS="-O3 -mtune=znver2 -march=znver2"
 
 while test -n "$*"; do
     case $1 in

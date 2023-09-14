@@ -1,0 +1,51 @@
+From 056edb40fdd672d1640cc40c2b3b048a181ab94b Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 14 Sep 2023 23:19:25 +0900
+Subject: [PATCH] .el.elc: ignore byte compile errors
+
+---
+ Makefile.in      | 2 +-
+ lisp/Makefile.in | 6 +++---
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile.in b/Makefile.in
+index fdd9353e2..d32f5444b 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -759,7 +759,7 @@ install-arch-indep:
+ 	[ -z "${GZIP_PROG}" ] || { \
+ 	  echo "Compressing *.el etc. ..." && \
+ 	  cd "$(DESTDIR)${lispdir}" && \
+-	  for f in `find . -name "*.elc" -print | sed 's/.elc$$/.el/'`; do \
++	  for f in `find . -name "*.elc" ! -name "*loaddefs.elc" -print | sed 's/.elc$$/.el/'`; do \
+ 	    ${GZIP_PROG} -9n "$$f"; \
+ 	  done; \
+ 	  ${GZIP_PROG} -9n "../etc/publicsuffix.txt"; \
+diff --git a/lisp/Makefile.in b/lisp/Makefile.in
+index c4dd1e7a1..65e7fdfd1 100644
+--- a/lisp/Makefile.in
++++ b/lisp/Makefile.in
+@@ -320,17 +320,17 @@ .SUFFIXES:
+ # which uses it to avoid displaying certain messages which might be
+ # irritating/misleading during a bootstrap.
+ .el.elc:
+-	$(AM_V_ELC)$(emacs) $(BYTE_COMPILE_FLAGS) \
++	-$(AM_V_ELC)$(emacs) $(BYTE_COMPILE_FLAGS) \
+ 	-l comp -f batch-byte-compile $<
+ 	TZ=UTC0 touch -t 197001010000 $@
+ else
+ .el.elc:
+-	$(AM_V_ELC)$(emacs) $(BYTE_COMPILE_FLAGS) \
++	-$(AM_V_ELC)$(emacs) $(BYTE_COMPILE_FLAGS) \
+ 	-l comp -f batch-byte+native-compile $<
+ endif
+ else
+ .el.elc:
+-	$(AM_V_ELC)$(emacs) $(BYTE_COMPILE_FLAGS) -f batch-byte-compile $<
++	-$(AM_V_ELC)$(emacs) $(BYTE_COMPILE_FLAGS) -f batch-byte-compile $<
+ endif
+ 
+ .PHONY: compile-first compile-main compile compile-always
+-- 
+2.42.0.windows.2
+

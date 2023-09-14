@@ -45,7 +45,6 @@ jobs:
         if: runner.os == 'Windows'
         with:
           msystem: UCRT64
-          update: true
           release: false
 
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64

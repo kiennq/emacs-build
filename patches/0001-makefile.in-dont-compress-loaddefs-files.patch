@@ -1,6 +1,6 @@
-From 5b48a7426c9e427a14226ae76ac0ea7661d10371 Mon Sep 17 00:00:00 2001
+From fc0eedd0407ace352c3bab08e3e75b52386cad7e Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
-Date: Mon, 22 Aug 2022 16:18:58 +0900
+Date: Wed, 13 Sep 2023 19:22:51 +0900
 Subject: [PATCH] makefile.in: dont compress loaddefs files
 
 ---
@@ -8,10 +8,10 @@ Subject: [PATCH] makefile.in: dont compress loaddefs files
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/Makefile.in b/Makefile.in
-index 78103f897..f1ec3cf49 100644
+index fdd9353e2..d32f5444b 100644
 --- a/Makefile.in
 +++ b/Makefile.in
-@@ -671,7 +671,7 @@ install-arch-indep:
+@@ -759,7 +759,7 @@ install-arch-indep:
  	[ -z "${GZIP_PROG}" ] || { \
  	  echo "Compressing *.el etc. ..." && \
  	  cd "$(DESTDIR)${lispdir}" && \
@@ -21,5 +21,5 @@ index 78103f897..f1ec3cf49 100644
  	  done; \
  	  ${GZIP_PROG} -9n "../etc/publicsuffix.txt"; \
 -- 
-2.37.0.windows.1
+2.42.0
 

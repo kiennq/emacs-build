@@ -81,7 +81,7 @@ function apply_patches ()
     if test -d "$source_dir"; then
         echo Applying patches in $patches_dir
         cd $source_dir
-        find $patches_dir/*.patch | xargs -I % git apply --ignore-space-change --ignore-whitespace --inaccurate-eof %
+        find $patches_dir/*.patch | xargs -I % git apply --ignore-space-change --ignore-whitespace %
         error=$?
     fi
 

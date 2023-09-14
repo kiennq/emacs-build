@@ -19,10 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2022
+          - os: windows-latest
             shell: powershell
             arch: x86_64
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             shell: bash
 
     # The type of runner that the job will run on
@@ -38,7 +38,15 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
+
+      - name: Setup Msys2
+        uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: true
+          release: false
 
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64
       - name: Clone Emacs
@@ -59,16 +67,19 @@ jobs:
           echo "EMACS_VER=${{ env.EMACS_MAJOR_VER }}.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $GITHUB_ENV
         shell: bash
 
-      - name: Build and pack Emacs
+      - name: Build Emacs
         if: runner.os == 'Windows'
         uses: Wandalen/wretry.action@master
         with:
           # Require --nativecomp and --with-* flags, else the deps will not be included properly
           command: |
             .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
-            .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
-          attempt_limit: 3
+          attempt_limit: 5
           attempt_delay: 2000
+
+      - name: Package Emacs
+        if: runner.os == 'Windows'
+        run: .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'

@@ -13,6 +13,14 @@ set emacs_branch=emacs-29
 
 CFLAGS contain `-mtune=native -march=native` so using github workflow to build remotely won't optimize for my Ryzen9.  Instead I should replace with `-mtune=znver2 -march=znver2`.  For laptop use `skylake`.
 
+Recently got this error followed by a long list of possible solutions 
+
+```
+Warning (emacs): Org version mismatch. Org loading aborted. This warning usually appears when a built-in Org version is loaded prior to the more recent Org version.
+```
+
+One of the suggestions is running `make bootstrap` (also mentioned [here](https://www.reddit.com/r/emacs/comments/10mk42s/issue_with_org_and_straight/jqhlgck/) so I added it to `emacs-build.sh`.
+
 # emacs-build v0.4
 
 Scripts to build a distribution of Emacs from sources, using MSYS2 and Mingw64(32)

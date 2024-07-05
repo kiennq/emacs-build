@@ -44,7 +44,7 @@ jobs:
         uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
         with:
-          msystem: UCRT64
+          msystem: MINGW64
           release: false
 
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64

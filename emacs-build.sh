@@ -75,12 +75,12 @@ function check_mingw_architecture ()
                     mingw_prefix="mingw-w64-$architecture"
                     build_type="x86_64-w64-mingw32"
                     ;;
-        UCRT64)     architecture=x86_64
-                    mingw_prefix="mingw-w64-ucrt-$architecture"
+        UCRT64)     architecture=ucrt-x86_64
+                    mingw_prefix="mingw-w64-$architecture"
                     build_type="x86_64-w64-mingw32"
                     ;;
-        CLANGARM64) architecture=aarch64
-                    mingw_prefix="mingw-w64-clang-$architecture"
+        CLANGARM64) architecture=clang-aarch64
+                    mingw_prefix="mingw-w64-$architecture"
                     build_type="x86_64-w64-mingw32"
                     ;;
         MSYS)       echo This tool cannot be ran from an MSYS shell.

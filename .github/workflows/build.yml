@@ -21,7 +21,10 @@ jobs:
         include:
           - os: windows-latest
             shell: powershell
-            arch: x86_64
+            msystem: MINGW64
+          - os: windows-latest
+            shell: powershell
+            msystem: UCRT64 
           - os: ubuntu-latest
             shell: bash
 
@@ -44,7 +47,7 @@ jobs:
         uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
         with:
-          msystem: UCRT64
+          msystem: ${{ matrix.msystem }}
           release: false
 
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64

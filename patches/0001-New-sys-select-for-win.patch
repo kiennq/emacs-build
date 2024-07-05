@@ -1,0 +1,357 @@
+From fbae48980a55f8d50e5499195384057fd3442be2 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 4 Jul 2024 23:47:11 -0700
+Subject: [PATCH] New sys select for win
+
+* add emulation MsgWaitForMultipleObjects and WaitForMultipleObjects
+* remove useless code
+* optimize MsgWaitForMultipleObjectsCustom
+* fix max fd
+* improve the format
+
+Co-authored-by: cat <wacshuiguo@163.com>
+---
+ src/w32.h     |   5 +-
+ src/w32proc.c | 260 ++++++++++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 247 insertions(+), 18 deletions(-)
+
+diff --git a/src/w32.h b/src/w32.h
+index 3dc79dabf4b..9bcae072d77 100644
+--- a/src/w32.h
++++ b/src/w32.h
+@@ -29,7 +29,10 @@ #define EMACS_W32_H
+ /* File descriptor set emulation.  */
+ 
+ /* MSVC runtime library has limit of 64 descriptors by default */
+-#define FD_SETSIZE  64
++#undef FD_SETSIZE
++/* for WaitForMultipleObjects/MsgWaitForMultipleObjects, every
++ * thread need one exitEvent. 64*64-64 */
++#define FD_SETSIZE  4032
+ typedef struct {
+   unsigned int bits[FD_SETSIZE / 32];
+ } fd_set;
+diff --git a/src/w32proc.c b/src/w32proc.c
+index 40181e09830..3e8c6d7011b 100644
+--- a/src/w32proc.c
++++ b/src/w32proc.c
+@@ -63,6 +63,231 @@ #define DEFER_MS_W32_H
+ #include "w32term.h"
+ #include "coding.h"
+ 
++/* The following is a multi-threaded simulation of
++   WaitForMultipleObjects and MsgWaitForMultipleObjects to break
++   through the limitation that these two functions can only monitor 64
++   handles at most.
++   It should be noted that the return values ​​of these two
++   functions are different from the original function. This is because
++   the number represented by the macro returned by the original
++   function is too small.
++ */
++#define MY_MAXIMUM_WAIT_OBJECTS FD_SETSIZE
++/* 1 object for notify thread exit */
++#define MY_MAX_WAIT_OBJECTS 63
++/* the error number should large enough to ommit the wait object index number */
++#define MY_WAIT_TIMEOUT 0x9999
++#define MY_WAIT_FAILED 0x9998
++#define MY_WAIT_ABANDONED_0 0x5000
++
++typedef struct
++{
++  HANDLE *handles;
++  int count;
++  BOOL bWaitAll;
++  DWORD dwMilliseconds;
++  HANDLE completionEvent; /* to notify main thread that this group has completed */
++  DWORD *threadResult; /* get the result of this group */
++  HANDLE exitEvent; /* to control thread exit */
++} WaitForThreadData;
++
++
++DWORD WINAPI WaitForThreadProc(LPVOID lpParam)
++{
++  WaitForThreadData *params = (WaitForThreadData *)lpParam;
++  HANDLE *allHandles = (HANDLE *)malloc((params->count + 1) * sizeof(HANDLE));
++  memcpy(allHandles, params->handles, params->count * sizeof(HANDLE));
++  allHandles[params->count] = params->exitEvent;
++
++  DWORD result = WaitForMultipleObjects(params->count + 1, allHandles, params->bWaitAll, params->dwMilliseconds);
++  if (result == WAIT_OBJECT_0 + params->count) /* exitEvent is triggered, thread exit */
++    result = WAIT_TIMEOUT;
++  else
++    *params->threadResult = result;
++
++  SetEvent(params->completionEvent);
++  free(allHandles);
++  return result;
++}
++
++DWORD WaitForMultipleObjectsCustom(DWORD nCount, CONST HANDLE *lpHandles, BOOL bWaitAll, DWORD dwMilliseconds)
++{
++  /* emacs sys_select always set bWaitAll to FALSE */
++  bWaitAll = FALSE;
++  if (nCount <= 64)
++  {
++    DWORD result = WaitForMultipleObjects (nCount, lpHandles, bWaitAll, dwMilliseconds);
++    if (result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + nCount)
++      return result - WAIT_OBJECT_0;
++    else if (WAIT_TIMEOUT == result)
++      return MY_WAIT_TIMEOUT;
++    else if (result >= WAIT_ABANDONED_0 && result < WAIT_ABANDONED_0 + nCount)
++      return result - WAIT_ABANDONED_0 + MY_WAIT_ABANDONED_0;
++    else
++      return MY_WAIT_FAILED;
++  }
++
++  int numGroups = (nCount + MY_MAX_WAIT_OBJECTS - 1) / MY_MAX_WAIT_OBJECTS;
++  HANDLE *groupCompletionEvents = (HANDLE *)malloc(numGroups * sizeof(HANDLE));
++  WaitForThreadData *threadParams = (WaitForThreadData *)malloc(numGroups * sizeof(WaitForThreadData));
++  HANDLE *threads = (HANDLE *)malloc(numGroups * sizeof(HANDLE));
++  DWORD *threadResults = (DWORD *)malloc(numGroups * sizeof(DWORD));
++  HANDLE *exitEvents = (HANDLE *)malloc(numGroups * sizeof(HANDLE));
++  DWORD startTime = GetTickCount();
++  DWORD elapsedTime = 0;
++
++  for (int i = 0; i < numGroups; ++i)
++  {
++    int groupCount = (i == numGroups - 1) ? (nCount - i * MY_MAX_WAIT_OBJECTS) : MY_MAX_WAIT_OBJECTS;
++    threadParams[i].handles = (HANDLE *)(lpHandles + i * MY_MAX_WAIT_OBJECTS);
++    threadParams[i].count = groupCount;
++    threadParams[i].bWaitAll = bWaitAll;
++    threadParams[i].dwMilliseconds = dwMilliseconds;
++    threadParams[i].completionEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
++    threadParams[i].threadResult = &threadResults[i];
++    threadParams[i].exitEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
++    groupCompletionEvents[i] = threadParams[i].completionEvent;
++    exitEvents[i] = threadParams[i].exitEvent;
++
++    threads[i] = CreateThread(NULL, 0, WaitForThreadProc, &threadParams[i], 0, NULL);
++  }
++
++  /* wait for any group to complete */
++  DWORD result;
++  if (dwMilliseconds != INFINITE)
++  {
++    DWORD remainingTime = dwMilliseconds - elapsedTime;
++    result = WaitForMultipleObjects(numGroups, groupCompletionEvents, bWaitAll, remainingTime);
++  }
++  else
++    result = WaitForMultipleObjects(numGroups, groupCompletionEvents, bWaitAll, dwMilliseconds);
++
++  /* notify all threads to exit */
++  for (int i = 0; i < numGroups; ++i)
++      SetEvent(exitEvents[i]);
++
++
++  /* get the final result */
++  if (result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + numGroups)
++  {
++    DWORD inner_result = threadResults[result - WAIT_OBJECT_0];
++    if (inner_result >= WAIT_OBJECT_0 && inner_result < WAIT_OBJECT_0 + threadParams[result - WAIT_OBJECT_0].count)
++      result = inner_result + (result - WAIT_OBJECT_0) * MY_MAX_WAIT_OBJECTS;
++    else if (inner_result >= WAIT_ABANDONED_0 && inner_result < WAIT_ABANDONED_0 + MY_MAX_WAIT_OBJECTS)
++      result = inner_result - WAIT_ABANDONED_0 + MY_WAIT_ABANDONED_0;
++    else if (WAIT_TIMEOUT == inner_result)
++      result = MY_WAIT_TIMEOUT;
++    else
++      result = MY_WAIT_FAILED;
++  }
++  else if (WAIT_TIMEOUT == result)
++    result = MY_WAIT_TIMEOUT;
++  else if (result >= WAIT_ABANDONED_0 && result < WAIT_ABANDONED_0 + numGroups)
++    result = result - WAIT_ABANDONED_0 + MY_WAIT_ABANDONED_0;
++  else
++    result = MY_WAIT_FAILED;
++
++  /* wait for all threads to exit */
++  WaitForMultipleObjects(numGroups, threads, TRUE, INFINITE);
++
++  for (int i = 0; i < numGroups; ++i)
++  {
++    CloseHandle(threads[i]);
++    CloseHandle(groupCompletionEvents[i]);
++    CloseHandle(exitEvents[i]);
++  }
++
++  free(groupCompletionEvents);
++  free(threadParams);
++  free(threads);
++  free(threadResults);
++  free(exitEvents);
++
++  return result;
++}
++
++typedef struct
++{
++  DWORD nCount;
++  HANDLE* lpHandles;
++  BOOL bWaitAll;
++  DWORD dwMilliseconds;
++  HANDLE completionEvent;
++  HANDLE exitEvent;
++  DWORD threadResult;
++} MsgWaitThreadData;
++
++DWORD WINAPI MsgWaitThreadFunction(LPVOID param)
++{
++    MsgWaitThreadData* data = (MsgWaitThreadData*)param;
++    HANDLE *allHandles = (HANDLE *)malloc((data->nCount + 1) * sizeof(HANDLE));
++    memcpy(allHandles, data->lpHandles, data->nCount * sizeof(HANDLE));
++    allHandles[data->nCount] = data->exitEvent;
++    DWORD result = WaitForMultipleObjectsCustom(data->nCount+1, allHandles, data->bWaitAll, data->dwMilliseconds);
++    if (result == WAIT_OBJECT_0 + data->nCount) /* exitEvent is triggered, thread exit */
++      data->threadResult = MY_WAIT_FAILED;
++    else
++      data->threadResult = result;
++
++    SetEvent (data->completionEvent);
++    free(allHandles);
++
++    return 0;
++}
++
++DWORD MsgWaitForMultipleObjectsCustom(DWORD nCount, HANDLE* lpHandles, BOOL bWaitAll, DWORD dwMilliseconds, DWORD dwWakeMask)
++{
++  /* emacs sys_select always set bWaitAll to FALSE */
++  bWaitAll = FALSE;
++  if (nCount <= 63)
++  {
++    DWORD result = MsgWaitForMultipleObjects (nCount, lpHandles, bWaitAll, dwMilliseconds, dwWakeMask);
++    if (result >= WAIT_OBJECT_0 && result <= WAIT_OBJECT_0 + nCount)
++      return result - WAIT_OBJECT_0;
++    else if (WAIT_TIMEOUT == result)
++      return MY_WAIT_TIMEOUT;
++    else if (result >= WAIT_ABANDONED_0 && result < WAIT_ABANDONED_0 + nCount)
++      return result - WAIT_ABANDONED_0 + MY_WAIT_ABANDONED_0;
++    else
++      return MY_WAIT_FAILED;
++  }
++  HANDLE completionEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
++  if (completionEvent == NULL)
++    return MY_WAIT_FAILED;
++  HANDLE exitEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
++  if (exitEvent == NULL)
++    return MY_WAIT_FAILED;
++
++  MsgWaitThreadData data = { nCount, lpHandles, bWaitAll, dwMilliseconds, completionEvent, exitEvent, MY_WAIT_FAILED };
++  HANDLE thread = CreateThread(NULL, 0, MsgWaitThreadFunction, &data, 0, NULL);
++  if (thread == NULL)
++  {
++    CloseHandle (completionEvent);
++    CloseHandle (exitEvent);
++    return MY_WAIT_FAILED;
++  }
++
++  DWORD result = MsgWaitForMultipleObjects (1, &completionEvent, FALSE, dwMilliseconds, dwWakeMask);
++  /* notify thread to exit */
++  SetEvent(exitEvent);
++  if (result == WAIT_OBJECT_0)
++    result = data.threadResult;
++  else if (result == WAIT_OBJECT_0 + 1)        /* means there is message in the message queue */
++    result =  WAIT_OBJECT_0 + nCount;
++  else if (result == WAIT_TIMEOUT)
++    result = MY_WAIT_TIMEOUT;
++  else
++    result = MY_WAIT_FAILED;
++
++  WaitForSingleObject(thread, INFINITE);
++
++  CloseHandle(exitEvent);
++  CloseHandle (completionEvent);
++  CloseHandle(thread);
++  return result;
++}
++
++
+ void w32_raise (int);
+ 
+ #define RVA_TO_PTR(var,section,filedata) \
+@@ -1566,15 +1791,15 @@ waitpid (pid_t pid, int *status, int options)
+ 	 quitting in that case.  */
+       if (!dont_wait)
+ 	maybe_quit ();
+-      active = WaitForMultipleObjects (nh, wait_hnd, FALSE, timeout_ms);
+-    } while (active == WAIT_TIMEOUT && !dont_wait);
++      active = WaitForMultipleObjectsCustom (nh, wait_hnd, FALSE, timeout_ms);
++    } while (active == MY_WAIT_TIMEOUT && !dont_wait);
+ 
+-  if (active == WAIT_FAILED)
++  if (active == MY_WAIT_FAILED)
+     {
+       errno = EBADF;
+       return -1;
+     }
+-  else if (active == WAIT_TIMEOUT && dont_wait)
++  else if (active == MY_WAIT_TIMEOUT && dont_wait)
+     {
+       /* PID specifies our subprocess, but it didn't exit yet, so its
+ 	 status is not yet available.  */
+@@ -1584,14 +1809,14 @@ waitpid (pid_t pid, int *status, int options)
+       return 0;
+     }
+   else if (active >= WAIT_OBJECT_0
+-	   && active < WAIT_OBJECT_0+MAXIMUM_WAIT_OBJECTS)
++	   && active < WAIT_OBJECT_0+MY_MAXIMUM_WAIT_OBJECTS)
+     {
+       active -= WAIT_OBJECT_0;
+     }
+-  else if (active >= WAIT_ABANDONED_0
+-	   && active < WAIT_ABANDONED_0+MAXIMUM_WAIT_OBJECTS)
++  else if (active >= MY_WAIT_ABANDONED_0
++	   && active < MY_WAIT_ABANDONED_0+MY_MAXIMUM_WAIT_OBJECTS)
+     {
+-      active -= WAIT_ABANDONED_0;
++      active -= MY_WAIT_ABANDONED_0;
+     }
+   else
+     emacs_abort ();
+@@ -2501,12 +2726,13 @@ sys_select (int nfds, SELECT_TYPE *rfds, SELECT_TYPE *wfds, SELECT_TYPE *efds,
+   /* Wait for input or child death to be signaled.  If user input is
+      allowed, then also accept window messages.  */
+   if (FD_ISSET (0, &orfds))
+-    active = MsgWaitForMultipleObjects (nh + nc, wait_hnd, FALSE, timeout_ms,
+-					QS_ALLINPUT);
++    active = MsgWaitForMultipleObjectsCustom (nh + nc, wait_hnd, FALSE, timeout_ms,
++              QS_ALLINPUT);
++
+   else
+-    active = WaitForMultipleObjects (nh + nc, wait_hnd, FALSE, timeout_ms);
++    active = WaitForMultipleObjectsCustom (nh + nc, wait_hnd, FALSE, timeout_ms);
+ 
+-  if (active == WAIT_FAILED)
++  if (active == MY_WAIT_FAILED)
+     {
+       DebPrint (("select.WaitForMultipleObjects (%d, %lu) failed with %lu\n",
+ 		 nh + nc, timeout_ms, GetLastError ()));
+@@ -2517,7 +2743,7 @@ sys_select (int nfds, SELECT_TYPE *rfds, SELECT_TYPE *wfds, SELECT_TYPE *efds,
+       errno = EINTR;
+       return -1;
+     }
+-  else if (active == WAIT_TIMEOUT)
++  else if (active == MY_WAIT_TIMEOUT)
+     {
+       if (noninteractive)
+ 	{
+@@ -2527,14 +2753,14 @@ sys_select (int nfds, SELECT_TYPE *rfds, SELECT_TYPE *wfds, SELECT_TYPE *efds,
+       return 0;
+     }
+   else if (active >= WAIT_OBJECT_0
+-	   && active < WAIT_OBJECT_0+MAXIMUM_WAIT_OBJECTS)
++	   && active < WAIT_OBJECT_0+MY_MAXIMUM_WAIT_OBJECTS)
+     {
+       active -= WAIT_OBJECT_0;
+     }
+-  else if (active >= WAIT_ABANDONED_0
+-	   && active < WAIT_ABANDONED_0+MAXIMUM_WAIT_OBJECTS)
++  else if (active >= MY_WAIT_ABANDONED_0
++	   && active < MY_WAIT_ABANDONED_0+MY_MAXIMUM_WAIT_OBJECTS)
+     {
+-      active -= WAIT_ABANDONED_0;
++      active -= MY_WAIT_ABANDONED_0;
+     }
+   else
+     emacs_abort ();
+-- 
+2.45.0.windows.1
+

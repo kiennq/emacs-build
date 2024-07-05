@@ -65,38 +65,46 @@ function write_version_number ()
 
 function check_mingw_architecture ()
 {
+    mingw_dir="/${MSYSTEM,,}/"
     case "$MSYSTEM" in
-        MINGW32) architecture=i686
-                 mingw_prefix="mingw-w64-i686"
-                 mingw_dir="$MINGW_PREFIX/"
-                 build_type="i686-w64-mingw32"
-                 ;;
-        MINGW64) architecture=x86_64
-                 mingw_prefix="mingw-w64-x86_64"
-                 mingw_dir="$MINGW_PREFIX/"
-                 build_type="x86_64-w64-mingw32"
-                 ;;
-        MSYSTEM) echo This tool cannot be ran from an MSYS shell.
-                 echo Please open a Mingw64 or Mingw32 terminal.
-                 echo
-                 exit -1
-                 ;;
-        *)       echo This tool must be run from a Mingw64/32 system
-                 echo
-                 exit -1
+        MINGW32)    architecture=i686
+                    mingw_prefix="mingw-w64-$architecture"
+                    build_type="i686-w64-mingw32"
+                    ;;
+        MINGW64)    architecture=x86_64
+                    mingw_prefix="mingw-w64-$architecture"
+                    build_type="x86_64-w64-mingw32"
+                    ;;
+        UCRT64)     architecture=x86_64
+                    mingw_prefix="mingw-w64-ucrt-$architecture"
+                    build_type="x86_64-w64-mingw32"
+                    ;;
+        CLANGARM64) architecture=aarch64
+                    mingw_prefix="mingw-w64-clang-$architecture"
+                    build_type="x86_64-w64-mingw32"
+                    ;;
+        MSYS)       echo This tool cannot be ran from an MSYS shell.
+                    echo Please open a Ucrt64/Mingw64/Mingw32 terminal.
+                    echo
+                    exit -1
+                    ;;
+        *)          echo This tool must be run from a Ucrt64/Mingw64/Mingw32 terminal.
+                    echo
+                    exit -1
     esac
 }
 
 function ensure_mingw_build_software ()
 {
-    local build_packages="zip unzip base-devel ${mingw_prefix}-toolchain"
-    pacman -S --noconfirm --needed $build_packages >/dev/null 2>&1
+    echo Install essential packages
+    local build_packages="git zip unzip base-devel ${mingw_prefix}-toolchain autoconf automake"
+    pacman --noprogressbar --noconfirm --needed -S $build_packages >/dev/null 2>&1
     if test "$?" != 0; then
         echo Unable to install $build_packages
         echo Giving up
         exit -1
     fi
-    if [ -z `which git 2>&1` ]; then
+    if [ -z "`which git 2>&1`" ]; then
         echo Installing Git for MSYS2
         pacman -S --noconfirm --needed git
         if test "$?" != 0; then
@@ -200,10 +208,18 @@ function action2_build ()
 {
     echo start building
     rm -f "$emacs_install_dir/bin/emacs.exe"
+
+    # See https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-emacs/PKGBUILD
+    _sanity_check=$([[ "${MSYSTEM}" != MINGW* ]] || echo yes)
+
     if prepare_source_dir $emacs_source_dir \
             && prepare_build_dir $emacs_build_dir && emacs_configure_build_dir; then
         echo Building Emacs in directory $emacs_build_dir
-        make -j $emacs_build_threads -C $emacs_build_dir && return 0
+        if [[ "$_sanity_check" == "yes" ]]; then
+            make -j $emacs_build_threads -C $emacs_build_dir && return 0
+        else
+            make -j $emacs_build_threads -C $emacs_build_dir actual-all && return 0
+        fi
     fi
     echo Configuration and build process failed
     return -1
@@ -228,6 +244,7 @@ function action2_install ()
         # HACK!!! Somehow libgmp is not installed as part of the
         # standalone Emacs build process. This is weird, but means
         # we have to copy it by hand.
+
         make -j $emacs_build_threads -C $emacs_build_dir install \
             && cp "${mingw_dir}bin/libgmp"*.dll "$emacs_install_dir/bin/" \
             && rm -f "$emacs_install_dir/bin/emacs-"*.exe \
@@ -323,7 +340,6 @@ gif mingw-giflib
 gnutls mingw-gnutls
 harfbuzz mingw-harfbuzz
 jpeg mingw-libjpeg-turbo
-json mingw-jansson
 lcms2 mingw-lcms2
 png mingw-libpng
 rsvg mingw-librsvg
@@ -333,6 +349,9 @@ xml2 mingw-libxml2
 xpm mingw-xpm-nox
 zlib mingw-zlib
 EOF
+    # emacs30 has built-in json without lib-jansson
+    # echo json mingw-jansson
+
     if test "$emacs_nativecomp" = yes; then
         echo native-compilation mingw-libgccjit
     fi

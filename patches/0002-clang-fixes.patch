@@ -1,0 +1,27 @@
+From 1da94014c6435398430b8b1ec9354065a0599638 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 5 Jul 2024 02:39:23 -0700
+Subject: [PATCH 2/3] clang fixes
+
+---
+ nt/mingw-cfg.site | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/nt/mingw-cfg.site b/nt/mingw-cfg.site
+index 9962cc46642..197c186a3e3 100644
+--- a/nt/mingw-cfg.site
++++ b/nt/mingw-cfg.site
+@@ -29,6 +29,10 @@
+ # are necessary to steer the test in the direction you need, by
+ # judiciously setting variables that control the test results.
+ 
++# We want to use sys/wait.h from nt/inc
++# https://lists.gnu.org/archive/html/help-gnu-emacs/2023-05/msg00107.html
++ac_cv_header_sys_wait_h=yes
++
+ # We want to use getopt.h from gnulib
+ ac_cv_header_getopt_h=no
+ 
+-- 
+2.45.0.windows.1
+

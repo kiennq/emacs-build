@@ -38,7 +38,7 @@ if (!(Test-Path "$msys2_dir\msys2_shell.cmd"))
         Write-Output "Downloading MSYS2 installer to $installer"
         [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
         $installer_obj = (Invoke-RestMethod -Uri $release_url).assets | Where-Object { $_.name -match 'sfx.exe$' }
-        Invoke-WebRequest -Uri $installer_obj.browser_download_url -OutFile $installer
+        Invoke-WebRequest -Uri $installer_obj.browser_download_url -OutFile $installer -UseBasicParsing
     }
 
     # $checksum = (Get-FileHash $installer -Algorithm SHA256)[0].Hash

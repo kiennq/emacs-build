@@ -210,7 +210,8 @@ function action2_build ()
     rm -f "$emacs_install_dir/bin/emacs.exe"
 
     # See https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-emacs/PKGBUILD
-    _sanity_check=$([[ "${MSYSTEM}" != MINGW* ]] || echo yes)
+    # _sanity_check=$([[ "${MSYSTEM}" != MINGW* ]] || echo yes)
+    _sanity_check=$(echo yes)
 
     if prepare_source_dir $emacs_source_dir \
             && prepare_build_dir $emacs_build_dir && emacs_configure_build_dir; then

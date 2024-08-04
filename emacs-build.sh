@@ -204,33 +204,42 @@ function action1_ensure_packages ()
     ensure_packages `emacs_root_packages`
 }
 
-function action2_build ()
+function action2.0_prep_build ()
 {
-    echo start building
+    echo Preparing build directory
+    prepare_source_dir $emacs_source_dir \
+        && prepare_build_dir $emacs_build_dir \
+        && emacs_configure_build_dir && return 0
+
+    echo Configuration failed
+    return -1
+}
+
+function action2.1_build ()
+{
+    echo Start building
     rm -f "$emacs_install_dir/bin/emacs.exe"
 
     # See https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-emacs/PKGBUILD
     # _sanity_check=$([[ "${MSYSTEM}" != MINGW* ]] || echo yes)
     _sanity_check=$(echo yes)
 
-    if prepare_source_dir $emacs_source_dir \
-            && prepare_build_dir $emacs_build_dir && emacs_configure_build_dir; then
-        echo Building Emacs in directory $emacs_build_dir
-        if [[ "$_sanity_check" == "yes" ]]; then
-            make -j $emacs_build_threads -C $emacs_build_dir && return 0
-        else
-            make -j $emacs_build_threads -C $emacs_build_dir actual-all && return 0
-        fi
+    echo Building Emacs in directory $emacs_build_dir
+    if [[ "$_sanity_check" == "yes" ]]; then
+        make -j $emacs_build_threads -C $emacs_build_dir && return 0
+    else
+        make -j $emacs_build_threads -C $emacs_build_dir actual-all && return 0
     fi
-    echo Configuration and build process failed
+
+    echo Build process failed
     return -1
 }
 
-function action2_install ()
+function action2.2_install ()
 {
     if test -f "$emacs_install_dir/bin/emacs.exe"; then
         echo $emacs_install_dir/bin/emacs.exe exists
-        echo refusing to reinstall
+        echo Refusing to reinstall
     else
         rm -rf "$emacs_install_dir"
         mkdir -p "$emacs_install_dir/bin"
@@ -499,14 +508,16 @@ while test -n "$*"; do
         --clean-all) add_actions action0_clean action0_clean_rest;;
         --clone) add_actions action0_clone;;
         --ensure) add_actions action1_ensure_packages;;
-        --build) add_actions action1_ensure_packages action2_build;;
+        --configure) add_actions action2.0_prep_build;;
+        --build-dev) add_actions action2.1_build;;
+        --build) add_actions action1_ensure_packages action2.0_prep_build action2.1_build;;
         --deps) add_actions action1_ensure_packages action3_package_deps;;
-        --pack-emacs) add_actions action2_install action4_package_emacs;;
-        --pack-all) add_actions action1_ensure_packages action3_package_deps action2_install action5_package_all;;
-        # --pack-all) add_actions action1_ensure_packages action2_install;;
+        --pack-emacs) add_actions action2.2_install action4_package_emacs;;
+        --pack-all) add_actions action1_ensure_packages action3_package_deps action2.2_install action5_package_all;;
+        # --pack-all) add_actions action1_ensure_packages action2.2_install;;
 
-        --pdf-tools) add_actions action2_install action3_pdf_tools;;
-        --mu) add_actions action2_install action3_mu;;
+        --pdf-tools) add_actions action2.2_install action3_pdf_tools;;
+        --mu) add_actions action2.2_install action3_mu;;
         --isync) add_actions action3_isync;;
         --aspell) add_actions action3_aspell;;
         --hunspell) add_actions action3_hunspell;;
@@ -536,7 +547,7 @@ if test -z "$emacs_branch"; then
 fi
 actions=`unique_list $actions`
 if test -z "$actions"; then
-    actions="action0_clone action1_ensure_packages action2_build action3_package_deps action5_package_all"
+    actions="action0_clone action1_ensure_packages action2.1_build action3_package_deps action5_package_all"
 fi
 features=`unique_list $features`
 ensure_mingw_build_software

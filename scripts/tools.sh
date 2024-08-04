@@ -5,6 +5,7 @@ function errcho ()
 
 function unique_list ()
 {
+    # To preserve order, we use awk to remove duplicates `awk '!seen[$0]++'`
     echo $* | sed -e 's,[[:space:]][[:space:]]*,\n,g' | sort | uniq | sed -e '/^$/d'
 }
 

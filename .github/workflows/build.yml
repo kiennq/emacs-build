@@ -11,8 +11,32 @@ on:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
+  prepare_env:
+    name: Prepare build version
+    runs-on: ubuntu-latest
+    env:
+      EMACS_REPO: https://github.com/kiennq/emacs.git
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get build version
+        id: vars
+        run: |
+          mkdir -p ./git/emacs
+          cd ./git/emacs/
+          git clone --depth 1 $EMACS_REPO .
+          commit=`date +'%Y%m%d'`.`git rev-parse --short=7 HEAD`
+          major_ver=`cat configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`
+          version=`echo ${major_ver}.${{ github.run_number }}.${commit}`
+          # bail out if the release existed
+          echo "version=${version}" >> $GITHUB_ENV
+    outputs:
+      repo: ${{ env.EMACS_REPO }}
+      version: ${{ env.version }}
+
   build:
+    needs: prepare_env
+    name: Build Emacs
     # Matrix strategy from
     # https://github.com/msys2/MINGW-packages/blob/master/.github/workflows/main.yml
     strategy:
@@ -24,7 +48,7 @@ jobs:
             msystem: MINGW64
           - os: windows-latest
             shell: powershell
-            msystem: UCRT64 
+            msystem: UCRT64
           - os: ubuntu-latest
             shell: bash
 
@@ -32,7 +56,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MSYS2_DIR: C:\msys64
-      EMACS_REPO: https://github.com/kiennq/emacs.git
+      EMACS_REPO: ${{ needs.prepare_env.outputs.repo }}
 
     defaults:
       run:
@@ -41,7 +65,7 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Msys2
         uses: msys2/setup-msys2@v2
@@ -61,13 +85,6 @@ jobs:
           mkdir -p ./git/emacs
           cd ./git/emacs/
           git clone --depth 1 $EMACS_REPO .
-          echo "EMACS_COMMIT=`date +'%Y%m%d'`.`git rev-parse --short=7 HEAD`" >> $GITHUB_ENV
-          echo "EMACS_MAJOR_VER=`cat configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`" >> $GITHUB_ENV
-
-      - name: Set package version
-        run: |
-          echo "EMACS_VER=${{ env.EMACS_MAJOR_VER }}.${{ github.run_number }}.${{ env.EMACS_COMMIT }}" >> $GITHUB_ENV
-        shell: bash
 
       - name: Build Emacs
         if: runner.os == 'Windows'
@@ -77,44 +94,25 @@ jobs:
 
       - name: Package Emacs
         if: runner.os == 'Windows'
-        run: .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
+        run: |
+          .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'
         run: |
           chmod 755 ./emacs-build-unix.sh
           mkdir -p ./zips
-          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ env.EMACS_VER }} -d ./zips
+          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips
 
-      # Upload everything
-      - name: Upload binaries
-        uses: actions/upload-artifact@v2
+      # Upload release for each build
+      - name: Upload binaries to release
+        id: upload_release
+        uses: svenstaro/upload-release-action@v2
         with:
-          name: emacs-packages
-          path: zips/*
-          if-no-files-found: error
-
-    outputs:
-      version: ${{ env.EMACS_VER }}
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download binaries
-        uses: actions/download-artifact@v2
-        with:
-          name: emacs-packages
-      - run: ls -R
-
-      # Create release
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ needs.build.outputs.version }}
-          name: emacs_${{ needs.build.outputs.version }}
+          repo_token: ${{ github.token }}
+          file: ./zips/*{-full.zip,.deb}
+          file_glob: true
+          tag: v${{ needs.prepare_env.outputs.version }}
+          release_name: emacs_${{ needs.prepare_env.outputs.version }}
+          draft: false
           prerelease: false
-          files: |
-            *-full.zip
-            *.deb

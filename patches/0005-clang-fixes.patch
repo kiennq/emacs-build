@@ -1,7 +1,7 @@
-From 1da94014c6435398430b8b1ec9354065a0599638 Mon Sep 17 00:00:00 2001
+From 9653daa6d5271ff9b81343b843625d1ce7f0b3ab Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Fri, 5 Jul 2024 02:39:23 -0700
-Subject: [PATCH 2/3] clang fixes
+Subject: [PATCH 5/6] clang fixes
 
 ---
  nt/mingw-cfg.site | 4 ++++
@@ -23,5 +23,5 @@ index 9962cc46642..197c186a3e3 100644
  ac_cv_header_getopt_h=no
  
 -- 
-2.45.0.windows.1
+2.46.0.windows.1
 

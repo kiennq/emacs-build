@@ -1,7 +1,7 @@
-From 947e210062f6017073ab416120152c9c453fa37d Mon Sep 17 00:00:00 2001
+From ff31e0fceea45cdf201aa0f0b7f6974463133a5f Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Fri, 5 Jul 2024 02:50:31 -0700
-Subject: [PATCH 3/3] aarch64 fixes
+Subject: [PATCH 6/6] aarch64 fixes
 
 ---
  configure.ac            |  8 +++++---
@@ -13,7 +13,7 @@ Subject: [PATCH 3/3] aarch64 fixes
  create mode 100644 nt/emacs-ARM64.manifest
 
 diff --git a/configure.ac b/configure.ac
-index 909f5786c9a..5113d77d2d0 100644
+index 67da852667d..18948e127d5 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -1525,7 +1525,7 @@ AC_DEFUN
@@ -25,7 +25,7 @@ index 909f5786c9a..5113d77d2d0 100644
      case "${canonical}" in
        *-mingw* )
  		opsys=mingw32
-@@ -2369,6 +2369,7 @@ AC_DEFUN
+@@ -2389,6 +2389,7 @@ AC_DEFUN
  if test "$opsys" = "mingw32"; then
    case "$canonical" in
      x86_64-*-mingw*) C_SWITCH_SYSTEM="-mtune=generic" ;;
@@ -33,7 +33,7 @@ index 909f5786c9a..5113d77d2d0 100644
      *) C_SWITCH_SYSTEM="-mtune=pentium4" ;;
    esac
  fi
-@@ -3143,6 +3144,7 @@ AC_DEFUN
+@@ -3163,6 +3164,7 @@ AC_DEFUN
    EMACSRES="emacs.res"
    case "$canonical" in
      x86_64-*-*) EMACS_MANIFEST="emacs-x64.manifest" ;;
@@ -41,7 +41,7 @@ index 909f5786c9a..5113d77d2d0 100644
      *) EMACS_MANIFEST="emacs-x86.manifest" ;;
    esac
    dnl Construct something of the form "24,4,0,0" with 4 components.
-@@ -7528,13 +7530,13 @@ AC_DEFUN
+@@ -7551,13 +7553,13 @@ AC_DEFUN
     ## If the values of -image-base are modified, the corresponding
     ## values of DEFAULT_IMAGE_BASE in w32fns.c should be kept in sync.
     case "$canonical" in
@@ -118,7 +118,7 @@ index ed217887c5d..62de3f362b4 100644
  #else
  1 24 "emacs-x86.manifest"
 diff --git a/nt/inc/ms-w32.h b/nt/inc/ms-w32.h
-index cea0b072723..0f16a1792f1 100644
+index 7212e4d2984..d5b7b021527 100644
 --- a/nt/inc/ms-w32.h
 +++ b/nt/inc/ms-w32.h
 @@ -217,7 +217,7 @@ #define MAX_UTF8_PATH   (MAXPATHLEN * 4)
@@ -131,7 +131,7 @@ index cea0b072723..0f16a1792f1 100644
     handler, see https://sourceforge.net/p/mingw-w64/mailman/message/32421953/.
     This seems to be an unsolved problem in the MinGW64 runtime.  So we
 diff --git a/src/w32fns.c b/src/w32fns.c
-index 7fc2f598b3e..860b9687463 100644
+index bd65aa48a14..2080babde4e 100644
 --- a/src/w32fns.c
 +++ b/src/w32fns.c
 @@ -11254,8 +11254,12 @@ stack_overflow_handler (void)
@@ -160,5 +160,5 @@ index 7fc2f598b3e..860b9687463 100644
        exception_data->ContextRecord->Eip = (DWORD_PTR) &stack_overflow_handler;
  #endif
 -- 
-2.45.0.windows.1
+2.46.0.windows.1
 

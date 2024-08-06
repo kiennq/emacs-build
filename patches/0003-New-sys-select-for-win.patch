@@ -1,7 +1,7 @@
-From fbae48980a55f8d50e5499195384057fd3442be2 Mon Sep 17 00:00:00 2001
+From 12c00585b8dd7f41e6114b9cc500c9dfc178716a Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Thu, 4 Jul 2024 23:47:11 -0700
-Subject: [PATCH] New sys select for win
+Subject: [PATCH 3/6] New sys select for win
 
 * add emulation MsgWaitForMultipleObjects and WaitForMultipleObjects
 * remove useless code
@@ -353,5 +353,5 @@ index 40181e09830..3e8c6d7011b 100644
    else
      emacs_abort ();
 -- 
-2.45.0.windows.1
+2.46.0.windows.1
 

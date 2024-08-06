@@ -1,7 +1,7 @@
-From 056edb40fdd672d1640cc40c2b3b048a181ab94b Mon Sep 17 00:00:00 2001
+From 295b48f4acc96bfb9a8094542c1e6627c542925a Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Thu, 14 Sep 2023 23:19:25 +0900
-Subject: [PATCH] .el.elc: ignore byte compile errors
+Subject: [PATCH 1/6] .el.elc: ignore byte compile errors
 
 ---
  Makefile.in      | 2 +-
@@ -9,10 +9,10 @@ Subject: [PATCH] .el.elc: ignore byte compile errors
  2 files changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/Makefile.in b/Makefile.in
-index fdd9353e2..d32f5444b 100644
+index ade7d258a4c..473bc6ed7d8 100644
 --- a/Makefile.in
 +++ b/Makefile.in
-@@ -759,7 +759,7 @@ install-arch-indep:
+@@ -760,7 +760,7 @@ install-arch-indep:
  	[ -z "${GZIP_PROG}" ] || { \
  	  echo "Compressing *.el etc. ..." && \
  	  cd "$(DESTDIR)${lispdir}" && \
@@ -22,10 +22,10 @@ index fdd9353e2..d32f5444b 100644
  	  done; \
  	  ${GZIP_PROG} -9n "../etc/publicsuffix.txt"; \
 diff --git a/lisp/Makefile.in b/lisp/Makefile.in
-index c4dd1e7a1..65e7fdfd1 100644
+index 95cb6a97213..2434f8d66ab 100644
 --- a/lisp/Makefile.in
 +++ b/lisp/Makefile.in
-@@ -320,17 +320,17 @@ .SUFFIXES:
+@@ -322,17 +322,17 @@ .SUFFIXES:
  # which uses it to avoid displaying certain messages which might be
  # irritating/misleading during a bootstrap.
  .el.elc:
@@ -47,5 +47,5 @@ index c4dd1e7a1..65e7fdfd1 100644
  
  .PHONY: compile-first compile-main compile compile-always
 -- 
-2.42.0.windows.2
+2.46.0.windows.1
 

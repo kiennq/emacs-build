@@ -36,14 +36,6 @@ function clone_repo ()
     local branch="$1"
     local repo="$2"
     local source_dir="$3"
-    local dirname="$4"
-    local depth="$5"
-    if test -z $dirname; then
-        dirname=`git_branch_name_to_file_name $branch`
-    fi
-    if test $depth; then
-        depth="--depth $depth"
-    fi
 
     pushd . >/dev/null
     local error
@@ -57,8 +49,8 @@ function clone_repo ()
         fi
     else
         echo Cloning Emacs repository $repo.
-        git clone --filter=tree:0 $depth -b $branch "$repo" "$source_dir" && \
-            cd "$source_dir" && git config pull.rebase false
+        git clone --filter=tree:0 "$repo" "$source_dir" --no-checkout && \
+            cd "$source_dir" && git config pull.rebase false && git checkout "$branch"
         error=$?
         if test $? != 0; then
             echo Git clone failed. Deleting source directory.
@@ -82,7 +74,7 @@ function apply_patches ()
     if test -d "$source_dir"; then
         echo Applying patches in $patches_dir
         cd $source_dir
-        find $patches_dir/*.patch | xargs -I % git apply --ignore-space-change --ignore-whitespace %
+        find $patches_dir/*.patch | xargs -I % $SHELL -c 'git apply --ignore-space-change --ignore-whitespace % || true'
         error=$?
     fi
 

@@ -185,7 +185,7 @@ function action0_clean_rest ()
 
 function action0_clone ()
 {
-    clone_repo "$emacs_branch" "$emacs_repo" "$emacs_source_dir" "$emacs_branch_name" "$emacs_depth"
+    clone_repo "$emacs_branch" "$emacs_repo" "$emacs_source_dir"
     if test "$emacs_apply_patches" = "yes"; then
         apply_patches "$emacs_source_dir" || true
     fi
@@ -464,7 +464,6 @@ emacs_apply_patches=yes
 export LANG=C
 emacs_repo=https://github.com/emacs-mirror/emacs.git
 emacs_branch=""
-emacs_depth=""
 emacs_build_root=`pwd`
 emacs_build_git_dir="$emacs_build_root/git"
 emacs_build_build_dir="$emacs_build_root/build"
@@ -483,7 +482,6 @@ while test -n "$*"; do
         --threads) shift; emacs_build_threads="$1";;
         --repo) shift; emacs_repo="$1";;
         --branch) shift; emacs_branch="$1";;
-        --depth) shift; emacs_depth="$1";;
         --no-patches) emacs_apply_patches=no;;
         --with-all) add_all_features;;
         --without-*) delete_feature `echo $1 | sed -e 's,--without-,,'`;;

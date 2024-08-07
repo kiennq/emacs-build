@@ -25,14 +25,17 @@ jobs:
           mkdir -p ./git/emacs
           cd ./git/emacs/
           git clone --depth 1 $EMACS_REPO .
-          commit=`date +'%Y%m%d'`.`git rev-parse --short=7 HEAD`
+          ts=`date +'%Y%m%d'`
+          commit=`git rev-parse --short=7 HEAD`
           major_ver=`cat configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`
-          version=`echo ${major_ver}.${{ github.run_number }}.${commit}`
-          # bail out if the release existed
+          version=`echo ${major_ver}.${{ github.run_number }}.${ts}.${commit}`
+
+          echo "commit=${commit}" >> $GITHUB_ENV
           echo "version=${version}" >> $GITHUB_ENV
     outputs:
       repo: ${{ env.EMACS_REPO }}
       version: ${{ env.version }}
+      commit: ${{ env.commit }}
 
   build:
     needs: prepare_env
@@ -77,25 +80,26 @@ jobs:
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64
       - name: Clone Emacs
         if: runner.os == 'Windows'
-        run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git --depth 1
+        run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git --branch ${{ needs.prepare_env.outputs.commit }}
 
       - name: Clone Emacs
         if: runner.os != 'Windows'
         run: |
           mkdir -p ./git/emacs
           cd ./git/emacs/
-          git clone --depth 1 $EMACS_REPO .
+          git clone --filter=tree:0 --no-checkout $EMACS_REPO .
+          git checkout ${{ needs.prepare_env.outputs.commit }}
 
       - name: Build Emacs
         if: runner.os == 'Windows'
         # Require --nativecomp and --with-* flags, else the deps will not be included properly
         run: |
-          .\emacs-build.cmd --nativecomp --slim --with-rsvg --build
+          .\emacs-build.cmd --nativecomp --slim --with-rsvg --branch ${{ needs.prepare_env.outputs.commit }} --build
 
       - name: Package Emacs
         if: runner.os == 'Windows'
         run: |
-          .\emacs-build.cmd --nativecomp --slim --with-rsvg --pack-all
+          .\emacs-build.cmd --nativecomp --slim --with-rsvg --branch ${{ needs.prepare_env.outputs.commit }} --pack-all
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'

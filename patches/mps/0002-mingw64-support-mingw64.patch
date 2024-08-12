@@ -1,0 +1,329 @@
+From 03f5c8f3f82c17387aa804e7f7f1ea43302191dc Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 11 Aug 2024 03:37:59 -0700
+Subject: [PATCH 2/2] mingw64: support mingw64
+
+---
+ code/comm.gmk   | 16 ++++++----
+ code/global.c   |  2 +-
+ code/mingw.gmk  | 33 +++++++++++----------
+ code/mps.c      |  2 +-
+ code/mps.h      | 14 ++-------
+ code/mpstd.h    | 16 ++++++++++
+ code/scan.c     |  1 -
+ code/ss.c       |  8 +++++
+ code/testlib.h  |  4 +--
+ code/w3i6gc.gmk | 77 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 10 files changed, 135 insertions(+), 38 deletions(-)
+ create mode 100644 code/w3i6gc.gmk
+
+diff --git a/code/comm.gmk b/code/comm.gmk
+index bcb19f1..6decc3a 100644
+--- a/code/comm.gmk
++++ b/code/comm.gmk
+@@ -161,11 +161,15 @@ POOLN = pooln.c
+ MV2 = poolmv2.c
+ MVFF = poolmvff.c
+ TESTLIB = testlib.c
+-ifneq ($(PFM),w3i3gc)
+-TESTTHR = testthrix.c
+-else
++
++ifeq ($(PFM),w3i3gc)
++TESTTHR = testthrw3.c
++else ifeq ($(PFM),w3i6gc)
+ TESTTHR = testthrw3.c
++else
++TESTTHR = testthrix.c
+ endif
++
+ FMTDY = fmtdy.c fmtno.c
+ FMTDYTST = fmtdy.c fmtno.c fmtdytst.c
+ FMTHETST = fmthe.c fmtdy.c fmtno.c fmtdytst.c
+@@ -222,7 +226,8 @@ MPMCOMMON = \
+     tree.c \
+     version.c \
+     vm.c \
+-    walk.c
++    walk.c \
++
+ POOLS = $(AMC) $(AMS) $(AWL) $(LO) $(MV2) $(MVFF) $(SNC)
+ MPM = $(MPMCOMMON) $(MPMPF) $(POOLS) $(PLINTH)
+ 
+@@ -303,8 +308,9 @@ TEST_TARGETS=\
+     ztfm$(EXEEXT)
+ 
+ ifneq ($(PFM),w3i3gc)
++ifneq ($(PFM),w3i6gc)
+ TEST_TARGETS = $(TEST_TARGETS) forktest$(EXEEXT)
+-
++endif
+ endif
+ 
+ # This target records programs that we were once able to build but
+diff --git a/code/global.c b/code/global.c
+index 6c7cd39..50dd41a 100644
+--- a/code/global.c
++++ b/code/global.c
+@@ -825,7 +825,7 @@ Bool ArenaStep(Globals globals, double interval, double multiplier)
+ Res ArenaFinalize(Arena arena, Ref obj)
+ {
+   Res res;
+-  Pool refpool;
++  Pool refpool = NULL;
+ 
+   AVERT(Arena, arena);
+   AVER(PoolOfAddr(&refpool, arena, (Addr)obj));
+diff --git a/code/mingw.gmk b/code/mingw.gmk
+index fa792aa..229e8b6 100644
+--- a/code/mingw.gmk
++++ b/code/mingw.gmk
+@@ -10,26 +10,27 @@
+ # common makefile fragment (<code/comm.gmk>) requires.
+ 
+ CC = gcc
+-CFLAGSDEBUG = -Og -gdwarf-4 -g3
+-CFLAGSOPT = -O2 -gdwarf-4 -g3
++CFLAGSDEBUG = -Og -g3
++CFLAGSOPT = -O2 -g3
+ EXEEXT = .exe
+ 
+ # Warnings that might be enabled by clients <design/config/#.warning.impl>.
+ CFLAGSCOMPILER := \
+--Waggregate-return \
+--Wall \
+--Wcast-qual \
+--Werror \
+--Wextra \
+--Winline \
+--Wmissing-prototypes \
+--Wnested-externs \
+--Wpointer-arith \
+--Wshadow \
+--Wstrict-aliasing=2 \
+--Wstrict-prototypes \
+--Wswitch-default \
+--Wwrite-strings
++	-Waggregate-return \
++	-Wall \
++	-Wcast-qual \
++	-Werror \
++	-Wextra \
++	-Winline \
++	-Wmissing-prototypes \
++	-Wnested-externs \
++	-Wpointer-arith \
++	-Wshadow \
++	-Wstrict-aliasing=2 \
++	-Wstrict-prototypes \
++	-Wswitch-default \
++	-Wwrite-strings \
++
+ CFLAGSCOMPILERSTRICT := -std=gnu89 -pedantic
+ 
+ # A different set of compiler flags for less strict compilation, for
+diff --git a/code/mps.c b/code/mps.c
+index 89047ce..edd7438 100644
+--- a/code/mps.c
++++ b/code/mps.c
+@@ -244,7 +244,7 @@
+ 
+ /* Windows on x86-64 with Microsoft Visual Studio or Pelles C */
+ 
+-#elif defined(MPS_PF_W3I6MV) || defined(MPS_PF_W3I6PC)
++#elif defined(MPS_PF_W3I6MV) || defined(MPS_PF_W3I6PC) || defined(MPS_PF_W3I6GC)
+ 
+ #include "lockw3.c"     /* Windows locks */
+ #include "thw3.c"       /* Windows threading */
+diff --git a/code/mps.h b/code/mps.h
+index 700c414..46df73f 100644
+--- a/code/mps.h
++++ b/code/mps.h
+@@ -28,20 +28,10 @@
+ #include <stddef.h>
+ #include <stdarg.h>
+ #include <limits.h>
++#include "mpstd.h"
+ 
+ 
+-/* Platform Dependencies
+- *
+- * We went for over ten years without any platform ifdefs in this header.
+- * Then Microsoft made unsigned long shorter than a pointer on Win64.  Ugh.
+- */
+-
+-#if defined(_MSC_VER) && defined(_WIN32) && defined(_WIN64) && defined(_M_X64)
+-typedef unsigned __int64 mps_word_t;
+-#else
+-typedef unsigned long mps_word_t;
+-#endif
+-
++typedef MPS_T_WORD mps_word_t;
+ 
+ /* Abstract Types */
+ 
+diff --git a/code/mpstd.h b/code/mpstd.h
+index fb852c5..cc78104 100644
+--- a/code/mpstd.h
++++ b/code/mpstd.h
+@@ -408,6 +408,22 @@
+ #define MPS_PF_ALIGN    4
+ 
+ 
++#elif defined(__MINGW64__) && defined(__x86_64) && defined(__GNUC__)
++#     if defined(CONFIG_PF_STRING) && ! defined(CONFIG_PF_W3I6GC)
++#           error "specified CONFIG_PF_... inconsistent with detected w3i6gc"
++#     endif
++#define MPS_PF_W3I6GC
++#define MPS_PF_STRING   "w3i6gc"
++#define MPS_OS_W3
++#define MPS_ARCH_I6
++#define MPS_BUILD_GC
++#define MPS_T_WORD      unsigned __int64
++#define MPS_T_ULONGEST  unsigned __int64
++#define MPS_WORD_WIDTH  64
++#define MPS_WORD_SHIFT  6
++#define MPS_PF_ALIGN    16
++
++
+ #else
+ #error "The MPS Kit does not have a configuration for this platform out of the box; see manual/build.txt"
+ #endif
+diff --git a/code/scan.c b/code/scan.c
+index 308cffc..c9c6d6b 100644
+--- a/code/scan.c
++++ b/code/scan.c
+@@ -22,7 +22,6 @@
+ #pragma warning( disable : 4127 )
+ #endif
+ 
+-
+ #define MPS_SCAN_AREA(test) \
+   MPS_SCAN_BEGIN(ss) {                                  \
+     mps_word_t *p = base;                               \
+diff --git a/code/ss.c b/code/ss.c
+index ce08810..f0208b2 100644
+--- a/code/ss.c
++++ b/code/ss.c
+@@ -32,12 +32,20 @@ SRCID(ss, "$Id$");
+  * is a hot stack pointer.  <design/ss#.sol.stack.hot>.
+  */
+ 
++#ifdef MPS_BUILD_GC
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wdangling-pointer"
++#endif
++
+ ATTRIBUTE_NOINLINE
+ void StackHot(void **stackOut)
+ {
+   *stackOut = &stackOut;
+ }
+ 
++#ifdef MPS_BUILD_GC
++#pragma GCC diagnostic pop
++#endif
+ 
+ /* StackScan -- scan the mutator's stack and registers */
+ 
+diff --git a/code/testlib.h b/code/testlib.h
+index a06fb58..7432faf 100644
+--- a/code/testlib.h
++++ b/code/testlib.h
+@@ -118,8 +118,8 @@
+ #define SCNuLONGEST "llu"
+ #define SCNXLONGEST "llX"
+ #define PRIXLONGEST "llX"
+-typedef unsigned long long ulongest_t;
+-typedef long long longest_t;
++typedef unsigned __int64 ulongest_t;
++typedef __int64 longest_t;
+ #define MPS_WORD_CONST(n) (n##ull)
+ #else
+ #define PRIuLONGEST "lu"
+diff --git a/code/w3i6gc.gmk b/code/w3i6gc.gmk
+new file mode 100644
+index 0000000..b79f329
+--- /dev/null
++++ b/code/w3i6gc.gmk
+@@ -0,0 +1,77 @@
++# -*- makefile-gmake -*-
++#
++# w3i6gc.gmk: BUILD FOR Windows/x64/MinGW/UCRT64 PLATFORM
++#
++# $Id$
++# Copyright (c) 2001-2020 Ravenbrook Limited.  See end of file for license.
++
++PFM = w3i6gc
++
++CFLAGS = -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast
++
++MPMPF = \
++	lockw3.c \
++	mpsiw3.c \
++	prmci6.c \
++	prmcw3.c \
++	prmcw3i6.c \
++	protw3.c \
++	spw3i6.c \
++	thw3.c \
++	vmw3.c \
++
++include mingw.gmk
++include comm.gmk
++
++CFLAGSCOMPILERSTRICT := -std=gnu99 -pedantic
++
++# Installation stuff copied from ../Makefile.in
++
++prefix ?= /usr
++INSTALL_PROGRAM = /bin/install -c
++INSTALL_DATA = /bin/install -c -m 644
++MPS_TARGET_NAME = w3i6gc
++
++build-via-make:
++	$(MAKE) -f $(MPS_TARGET_NAME).gmk EXTRA_TARGETS="$(EXTRA_TARGETS)"
++
++install-make-build: make-install-dirs build-via-make
++	$(INSTALL_DATA) mps*.h $(prefix)/include/
++	$(INSTALL_DATA) $(MPS_TARGET_NAME)/cool/mps.a  $(prefix)/lib/libmps-debug.a
++	$(INSTALL_DATA) $(MPS_TARGET_NAME)/hot/mps.a $(prefix)/lib/libmps.a
++	for PROGRAM in $(EXTRA_TARGETS); do $(INSTALL_PROGRAM)  $(MPS_TARGET_NAME)/hot/$$PROGRAM $(prefix)/bin/$$PROGRAM; done
++
++make-install-dirs:
++	mkdir -p $(prefix)/bin
++	mkdir -p $(prefix)/lib
++	mkdir -p $(prefix)/include
++
++install: install-make-build
++
++# C. COPYRIGHT AND LICENSE
++#
++# Copyright (C) 2001-2020 Ravenbrook Limited <https://www.ravenbrook.com/>.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met:
++#
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++#
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the
++#    distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-- 
+2.45.2.vfs.0.1
+

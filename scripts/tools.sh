@@ -68,7 +68,7 @@ function clone_repo ()
 function apply_patches ()
 {
     local source_dir="$1"
-    local patches_dir="$emacs_build_root/patches"
+    local patches_dir="$emacs_build_root/patches/emacs"
     pushd . >/dev/null
     local error
     if test -d "$source_dir"; then

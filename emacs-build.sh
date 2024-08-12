@@ -43,18 +43,18 @@ function write_help () {
 }
 
 function write_features () {
-    local inactive=""
-    for f in $all_features; do
-        if [[ ! " $features " =~ .*$f ]]; then
-            inactive="$f $inactive"
-        fi
-    done
+    # local inactive=""
+    # for f in $all_features; do
+    #     if [[ ! " $features " =~ .*$f ]]; then
+    #         inactive="$f $inactive"
+    #     fi
+    # done
 
     echo "Compressed installation: $emacs_compress_files"
     echo "Strip executables: $emacs_strip_executables"
     echo "Emacs features:"
     for f in $features; do echo "  --with-$f"; done
-    for f in $inactive; do echo " --without $f"; done
+    for f in $inactive_features; do echo " --without-$f"; done
 }
 
 function write_version_number ()
@@ -155,13 +155,21 @@ function emacs_configure_build_dir ()
         options="$options --with-small-ja-dic"
     fi
 
-    for f in $all_features; do
-        if echo $features | grep $f > /dev/null; then
-            options="--with-$f $options"
-        else
-            options="--without-$f $options"
-        fi
+    # for f in $all_features; do
+    #     if echo $features | grep $f > /dev/null; then
+    #         options="--with-$f $options"
+    #     else
+    #         options="--without-$f $options"
+    #     fi
+    # done
+    for f in $features; do
+        options="--with-$f $options"
     done
+
+    for f in $inactive_features; do
+        options="--without-$f $options"
+    done
+
     echo Configuring Emacs with options
     echo   "$emacs_source_dir/configure" "--prefix=$emacs_install_dir" CFLAGS="$CFLAGS" $options
     if "$emacs_source_dir/configure" "--prefix=$emacs_install_dir" CFLAGS="$CFLAGS" $options; then
@@ -227,6 +235,7 @@ function action2.1_build ()
     echo Building Emacs in directory $emacs_build_dir
     if [[ "$_sanity_check" == "yes" ]]; then
         make -j $emacs_build_threads -C $emacs_build_dir && return 0
+        # make -j $emacs_build_threads -C $emacs_build_dir && return 0
     else
         make -j $emacs_build_threads -C $emacs_build_dir actual-all && return 0
     fi
@@ -350,6 +359,7 @@ gif mingw-giflib
 gnutls mingw-gnutls
 harfbuzz mingw-harfbuzz
 jpeg mingw-libjpeg-turbo
+json mingw-jansson
 lcms2 mingw-lcms2
 png mingw-libpng
 rsvg mingw-librsvg
@@ -359,8 +369,6 @@ xml2 mingw-libxml2
 xpm mingw-xpm-nox
 zlib mingw-zlib
 EOF
-    # emacs30 has built-in json without lib-jansson
-    # echo json mingw-jansson
 
     if test "$emacs_nativecomp" = yes; then
         echo native-compilation mingw-libgccjit
@@ -369,13 +377,16 @@ EOF
 
 function delete_feature () {
     features=`echo $features | sed -e "s,$1,,"`
+    inactive_features="$1 $inactive_features"
 }
 
 function add_all_features () {
     features="$all_features"
+    inactive_features=""
 }
 
 function add_feature () {
+    inactive_features=`echo $inactive_features | sed -e "s,$1,,"`
     features="$1 $features"
 }
 
@@ -450,6 +461,7 @@ packing_slim_exclusion="
 dependency_exclusions=""
 all_features=`feature_list | cut -f 1 -d ' '`
 features="$all_features"
+inactive_features=""
 
 actions=""
 do_clean=""
@@ -548,6 +560,7 @@ if test -z "$actions"; then
     actions="action0_clone action1_ensure_packages action2.1_build action3_package_deps action5_package_all"
 fi
 features=`unique_list $features`
+inactive_features=`unique_list $inactive_features`
 ensure_mingw_build_software
 
 emacs_extensions=""

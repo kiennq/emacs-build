@@ -1,0 +1,106 @@
+From 42005083f1efb61ed29bdf3f4541f12a04cfa7f0 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Tue, 13 Aug 2024 20:22:21 -0700
+Subject: [PATCH 3/3] adding quick build option
+
+---
+ Makefile.in   | 11 ++++++++---
+ code/comm.gmk |  2 ++
+ configure     |  3 +++
+ configure.ac  |  2 ++
+ 4 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile.in b/Makefile.in
+index a1e8759..7b5ad0c 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -28,17 +28,22 @@ XCODEBUILD=xcrun xcodebuild -project code/mps.xcodeproj
+ 
+ all: @BUILD_TARGET@
+ 
++quick: @QUICK_BUILD_TARGET@
++
+ build-via-make:
+ 	$(MAKE) $(TARGET_OPTS)
+ 
++quick-build-via-make:
++	$(MAKE) $(TARGET_OPTS) lib
++
+ clean-make-build:
+ 	$(MAKE) $(TARGET_OPTS) clean
+ 
+-install-make-build: make-install-dirs build-via-make
++install-make-build: make-install-dirs quick-build-via-make
+ 	$(INSTALL_DATA) code/mps*.h $(prefix)/include/
+-	$(INSTALL_DATA) code/$(MPS_TARGET_NAME)/cool/mps.a $(prefix)/lib/libmps-debug.a
++	$(INSTALL_DATA) code/$(MPS_TARGET_NAME)/cool/mps.a $(prefix)/lib/libmps-debug.a || true
+ 	$(INSTALL_DATA) code/$(MPS_TARGET_NAME)/hot/mps.a $(prefix)/lib/libmps.a
+-	for PROGRAM in $(EXTRA_TARGETS); do $(INSTALL_PROGRAM) code/$(MPS_TARGET_NAME)/hot/$$PROGRAM $(prefix)/bin/$$PROGRAM; done
++	for PROGRAM in $(EXTRA_TARGETS); do $(INSTALL_PROGRAM) code/$(MPS_TARGET_NAME)/hot/$$PROGRAM $(prefix)/bin/$$PROGRAM; done || true
+ 
+ build-via-xcode:
+ 	$(XCODEBUILD) -config Debug
+diff --git a/code/comm.gmk b/code/comm.gmk
+index 3efa66a..7680f7a 100644
+--- a/code/comm.gmk
++++ b/code/comm.gmk
+@@ -326,6 +326,8 @@ ALL_TARGETS=$(LIB_TARGETS) $(TEST_TARGETS) $(EXTRA_TARGETS)
+ 
+ all: $(ALL_TARGETS)
+ 
++lib: $(LIB_TARGETS)
++
+ 
+ # == Automated test suites ==
+ #
+diff --git a/configure b/configure
+index 78657f7..0e5a7a9 100755
+--- a/configure
++++ b/configure
+@@ -628,6 +628,7 @@ EXTRA_TARGETS
+ TEST_TARGET
+ INSTALL_TARGET
+ CLEAN_TARGET
++QUICK_BUILD_TARGET
+ BUILD_TARGET
+ MPS_BUILD_NAME
+ MPS_ARCH_NAME
+@@ -3448,6 +3449,7 @@ case $host_os in *\ *) host_os=`echo "$host_os" | sed 's/ /-/g'`;; esac
+ { $as_echo "$as_me:${as_lineno-$LINENO}: checking target platform" >&5
+ $as_echo_n "checking target platform... " >&6; }
+ BUILD_TARGET=build-via-make
++QUICK_BUILD_TARGET=quick-build-via-make
+ CLEAN_TARGET=clean-make-build
+ INSTALL_TARGET=install-make-build
+ TEST_TARGET=test-make-build
+@@ -3683,6 +3685,7 @@ CFLAGS="$CFLAGS $PFMCFLAGS"
+ 
+ 
+ 
++
+ ac_config_files="$ac_config_files Makefile example/scheme/Makefile"
+ 
+ 
+diff --git a/configure.ac b/configure.ac
+index 765df99..e6fb182 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -41,6 +41,7 @@ CFLAGS_LL="$CFLAGS_GC"
+ AC_CANONICAL_HOST
+ AC_MSG_CHECKING([target platform])
+ BUILD_TARGET=build-via-make
++QUICK_BUILD_TARGET=quick-build-via-make
+ CLEAN_TARGET=clean-make-build
+ INSTALL_TARGET=install-make-build
+ TEST_TARGET=test-make-build
+@@ -207,6 +208,7 @@ AC_SUBST(MPS_OS_NAME)
+ AC_SUBST(MPS_ARCH_NAME)
+ AC_SUBST(MPS_BUILD_NAME)
+ AC_SUBST(BUILD_TARGET)
++AC_SUBST(QUICK_BUILD_TARGET)
+ AC_SUBST(CLEAN_TARGET)
+ AC_SUBST(INSTALL_TARGET)
+ AC_SUBST(TEST_TARGET)
+-- 
+2.45.2.vfs.0.1
+

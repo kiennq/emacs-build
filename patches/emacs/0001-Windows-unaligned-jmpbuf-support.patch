@@ -1,0 +1,298 @@
+From 41c546078c039cb87bbc56431410019e100dd719 Mon Sep 17 00:00:00 2001
+From: Pip Cet <pipcet@protonmail.com>
+Date: Mon, 5 Aug 2024 19:20:00 +0000
+Subject: [PATCH] Windows: unaligned jmpbuf support
+
+---
+ src/alloc.c |   9 ++-
+ src/comp.c  | 165 +++++++++++++++++++++++++++++++++++++++++-----------
+ src/lisp.h  |  29 +++++++++
+ 3 files changed, 165 insertions(+), 38 deletions(-)
+
+diff --git a/src/alloc.c b/src/alloc.c
+index d9423a1b4..d64b0625a 100644
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -721,10 +721,13 @@ #define COMMON_MULTIPLE(a, b) \
+    and that contain Lisp objects.  On typical hosts malloc already
+    aligns sufficiently, but extra work is needed on oddball hosts
+    where Emacs would crash if malloc returned a non-GCALIGNED pointer.  */
+-enum { LISP_ALIGNMENT = alignof (union { union emacs_align_type x;
+-					 GCALIGNED_UNION_MEMBER }) };
++enum { LISP_ALIGNMENT = alignof (union { GCALIGNED_UNION_MEMBER }) };
+ verify (LISP_ALIGNMENT % GCALIGNMENT == 0);
+ 
++#ifdef HAVE_MPS
++verify (LISP_ALIGNMENT == GCALIGNMENT);
++#endif
++
+ /* True if malloc (N) is known to return storage suitably aligned for
+    Lisp objects whenever N is a multiple of LISP_ALIGNMENT.  In
+    practice this is true whenever alignof (max_align_t) is also a
+@@ -3107,7 +3110,7 @@ DEFUN ("make-list", Fmake_list, Smake_list, 2, 2, 0,
+ 			   Vector Allocation
+  ***********************************************************************/
+ /* Vector size requests are a multiple of this.  */
+-enum { roundup_size = COMMON_MULTIPLE (LISP_ALIGNMENT, word_size) };
++enum { roundup_size = COMMON_MULTIPLE (word_size, word_size) };
+ 
+ /* Round up X to nearest mult-of-ROUNDUP_SIZE --- use at compile time.  */
+ #define vroundup_ct(x) ROUNDUP (x, roundup_size)
+diff --git a/src/comp.c b/src/comp.c
+index 2e17b2906..82db10e71 100644
+--- a/src/comp.c
++++ b/src/comp.c
+@@ -537,6 +537,25 @@ #define DECL_BLOCK(name, func)				\
+ #endif
+ #define SETJMP_NAME SETJMP
+ 
++#if defined(WINDOWSNT)
++void *setjmp_real_buffer (sys_jmp_buf j)
++{
++  char *target = (char *)j->raw;
++  bool bad = (unsigned long long)target & 8;
++  if (bad) {
++    target += 8;
++  }
++  return target;
++}
++
++int setjmp_fixup (sys_jmp_buf j, int ret)
++{
++  memmove (j->raw, setjmp_real_buffer (j), sizeof (j->raw));
++
++  return ret;
++}
++#endif
++
+ /* Max number function importable by native compiled code.  */
+ #define F_RELOC_MAX_SIZE 1600
+ 
+@@ -720,7 +739,12 @@ helper_sanitizer_assert (Lisp_Object, Lisp_Object);
+ /* Note: helper_link_table must match the list created by
+    `declare_runtime_imported_funcs'.  */
+ static void *helper_link_table[] =
+-  { wrong_type_argument,
++  {
++#ifdef WINDOWSNT
++    setjmp_fixup,
++    setjmp_real_buffer,
++#endif
++    wrong_type_argument,
+     helper_PSEUDOVECTOR_TYPEP_XUNTAG,
+     pure_write_error,
+     push_handler,
+@@ -2232,33 +2256,88 @@ emit_setjmp (gcc_jit_rvalue *buf)
+ 
+   return gcc_jit_context_new_call (comp.ctxt, NULL, f, 1, args);
+ #else
+-  /* _setjmp (buf, __builtin_frame_address (0)) */
+-  gcc_jit_param *params[] =
++  /* setjmp_fixup (buf, _setjmp (setjmp_real_buffer (buf),
++                                 __builtin_frame_address (0))) */
++  gcc_jit_rvalue *frame_address;
++  gcc_jit_rvalue *real_buffer;
++  gcc_jit_rvalue *setjmp_result;
++
+   {
+-    gcc_jit_context_new_param (comp.ctxt, NULL, comp.void_ptr_type, "buf"),
+-    gcc_jit_context_new_param (comp.ctxt, NULL, comp.void_ptr_type, "frame"),
+-  };
+-  gcc_jit_rvalue *args[2];
++    gcc_jit_rvalue *args[] =
++    {
++      gcc_jit_context_new_rvalue_from_int (comp.ctxt, comp.unsigned_type, 0),
++    };
++    frame_address =
++      gcc_jit_context_new_call (comp.ctxt,
++				NULL,
++				gcc_jit_context_get_builtin_function (comp.ctxt,
++								      "__builtin_frame_address"),
++				ARRAYELTS (args), args);
++  }
+ 
+-  args[0] =
+-    gcc_jit_context_new_rvalue_from_int (comp.ctxt, comp.unsigned_type, 0);
++  {
++    gcc_jit_rvalue *args[] =
++    {
++      buf,
++    };
++    gcc_jit_param *params[] =
++    {
++      gcc_jit_context_new_param (comp.ctxt, NULL, comp.void_ptr_type, "buf"),
++    };
++    gcc_jit_function *f =
++      gcc_jit_context_new_function (comp.ctxt, NULL,
++				    GCC_JIT_FUNCTION_IMPORTED,
++				    comp.void_ptr_type, "setjmp_real_buffer",
++				    ARRAYELTS (params), params,
++				    false);
++    real_buffer =
++      emit_call (intern_c_string ("setjmp_real_buffer"), comp.void_ptr_type,
++		 ARRAYELTS (args), args, false);
++  }
+ 
+-  args[1] =
+-    gcc_jit_context_new_call (
+-      comp.ctxt,
+-      NULL,
+-      gcc_jit_context_get_builtin_function (comp.ctxt,
+-					    "__builtin_frame_address"),
+-      1, args);
+-  args[0] = buf;
+-  gcc_jit_function *f =
+-    gcc_jit_context_new_function (comp.ctxt, NULL,
+-				  GCC_JIT_FUNCTION_IMPORTED,
+-				  comp.int_type, STR (SETJMP_NAME),
+-				  ARRAYELTS (params), params,
+-				  false);
++  {
++    gcc_jit_param *params[] =
++    {
++      gcc_jit_context_new_param (comp.ctxt, NULL, comp.void_ptr_type, "buf"),
++      gcc_jit_context_new_param (comp.ctxt, NULL, comp.void_ptr_type, "frame"),
++    };
++    gcc_jit_rvalue *args[] =
++    {
++      real_buffer,
++      frame_address,
++    };
++    gcc_jit_function *f =
++      gcc_jit_context_new_function (comp.ctxt, NULL,
++				    GCC_JIT_FUNCTION_IMPORTED,
++				    comp.int_type, STR (SETJMP_NAME),
++				    ARRAYELTS (params), params,
++				    false);
++    setjmp_result =
++      gcc_jit_context_new_call (comp.ctxt,
++				NULL,
++				f,
++				ARRAYELTS (args), args);
++  }
+ 
+-  return gcc_jit_context_new_call (comp.ctxt, NULL, f, 2, args);
++  {
++    gcc_jit_param *params[] =
++    {
++      gcc_jit_context_new_param (comp.ctxt, NULL, comp.void_ptr_type, "buf"),
++      gcc_jit_context_new_param (comp.ctxt, NULL, comp.int_type, "ret"),
++    };
++    gcc_jit_rvalue *args[] =
++    {
++      buf,
++      setjmp_result,
++    };
++    gcc_jit_function *f =
++      gcc_jit_context_new_function (comp.ctxt ,NULL,
++				    GCC_JIT_FUNCTION_IMPORTED,
++				    comp.int_type, "setjmp_fixup",
++				    ARRAYELTS (params), params, false);
++    return emit_call (intern_c_string ("setjmp_fixup"), comp.int_type,
++		      ARRAYELTS (args), args, false);
++  }
+ #endif
+ }
+ 
+@@ -2970,6 +3049,15 @@ #define ADD_IMPORTED(f_name, ret_type, nargs, args)			       \
+ 
+   gcc_jit_type *args[4];
+ 
++#ifdef WINDOWSNT
++  args[0] = comp.void_ptr_type;
++  args[1] = comp.int_type;
++  ADD_IMPORTED (setjmp_fixup, comp.int_type, 2, args);
++
++  args[0] = comp.void_ptr_type;
++  ADD_IMPORTED (setjmp_real_buffer, comp.void_ptr_type, 1, args);
++#endif
++
+   ADD_IMPORTED (wrong_type_argument, comp.void_type, 2, NULL);
+ 
+   args[0] = comp.lisp_obj_type;
+@@ -5265,21 +5353,28 @@ maybe_defer_native_compilation (Lisp_Object function_name,
+       || !NILP (Fgethash (Vload_true_file_name, V_comp_no_native_file_h, Qnil)))
+     return;
+ 
+-  Lisp_Object src =
+-    concat2 (CALL1I (file-name-sans-extension, Vload_true_file_name),
+-	     build_pure_c_string (".el"));
+-  if (NILP (Ffile_exists_p (src)))
++  if (Ffboundp (intern_c_string ("file-name-sans-extension")))
+     {
+-      src = concat2 (src, build_pure_c_string (".gz"));
++      Lisp_Object src =
++	concat2 (CALL1I (file-name-sans-extension, Vload_true_file_name),
++		 build_pure_c_string (".el"));
+       if (NILP (Ffile_exists_p (src)))
+-	return;
+-    }
++	{
++	  src = concat2 (src, build_pure_c_string (".gz"));
++	  if (NILP (Ffile_exists_p (src)))
++	    return;
++	}
++      Fputhash (function_name, definition, Vcomp_deferred_pending_h);
+ 
+-  Fputhash (function_name, definition, Vcomp_deferred_pending_h);
++      pending_funcalls
++	= Fcons (list (Qnative__compile_async, src, Qnil, Qlate),
++		 pending_funcalls);
++    }
++  else
++    {
++      return;
++    }
+ 
+-  pending_funcalls
+-    = Fcons (list (Qnative__compile_async, src, Qnil, Qlate),
+-             pending_funcalls);
+ }
+ 
+ 
+diff --git a/src/lisp.h b/src/lisp.h
+index 784df7e86..ceab7edcf 100644
+--- a/src/lisp.h
++++ b/src/lisp.h
+@@ -2378,9 +2378,38 @@ CHAR_TABLE_EXTRA_SLOTS (struct Lisp_Char_Table *ct)
+ #else
+ /* A platform that uses neither _longjmp nor siglongjmp; assume
+    longjmp does not affect the sigmask.  */
++#ifndef __WIN64
+ typedef jmp_buf sys_jmp_buf;
+ # define sys_setjmp(j) setjmp (j)
+ # define sys_longjmp(j, v) longjmp (j, v)
++#else
++typedef struct
++{
++  jmp_buf raw;
++  uint64_t padding;
++} sys_jmp_buf[1];
++
++# define sys_setjmp(j) ({				\
++      char *target = (char *)j->raw;			\
++      bool bad = (unsigned long long)target & 8;	\
++      if (bad) {					\
++	target += 8;					\
++      }							\
++      int ret = setjmp ((void *)target);		\
++      memmove (j->raw, target, sizeof (j->raw));	\
++      ret;						\
++    })
++
++# define sys_longjmp(j, v) ({				\
++      char *target = (char *)j->raw;			\
++      bool bad = (unsigned long long)target & 8;	\
++      if (bad) {					\
++	target += 8;					\
++      }							\
++      memmove (target, j->raw, sizeof (j->raw));	\
++      longjmp ((void *)target, v);			\
++    })
++#endif
+ #endif
+ 
+ #include "thread.h"
+-- 
+2.45.2.vfs.0.1
+

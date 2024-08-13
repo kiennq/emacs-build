@@ -361,6 +361,7 @@ harfbuzz mingw-harfbuzz
 jpeg mingw-libjpeg-turbo
 json mingw-jansson
 lcms2 mingw-lcms2
+native-compilation mingw-libgccjit
 png mingw-libpng
 rsvg mingw-librsvg
 tiff mingw-libtiff
@@ -370,9 +371,6 @@ xpm mingw-xpm-nox
 zlib mingw-zlib
 EOF
 
-    if test "$emacs_nativecomp" = yes; then
-        echo native-compilation mingw-libgccjit
-    fi
 }
 
 function delete_feature () {
@@ -460,8 +458,7 @@ packing_slim_exclusion="
 
 dependency_exclusions=""
 all_features=`feature_list | cut -f 1 -d ' '`
-features="$all_features"
-inactive_features=""
+add_all_features
 
 actions=""
 do_clean=""
@@ -469,7 +466,6 @@ debug_dependency_list="false"
 emacs_compress_files=no
 emacs_build_version=0.4
 emacs_slim_build=no
-emacs_nativecomp=no
 emacs_build_threads=$((`nproc`*2))
 emacs_apply_patches=yes
 # This is needed for pacman to return the right text
@@ -498,8 +494,7 @@ while test -n "$*"; do
         --with-all) add_all_features;;
         --without-*) delete_feature `echo $1 | sed -e 's,--without-,,'`;;
         --with-*) add_feature `echo $1 | sed -e 's,--with-,,'`;;
-        --nativecomp) emacs_nativecomp=yes;;
-        --nativecomp-aot) emacs_nativecomp=yes; export NATIVE_FULL_AOT=1;;
+        --nativecomp-aot) export NATIVE_FULL_AOT=1;;
         --slim) add_all_features
                 delete_feature cairo # We delete features here, so that user can repopulate them
                 delete_feature rsvg
@@ -545,10 +540,7 @@ while test -n "$*"; do
     esac
     shift
 done
-if test "$emacs_nativecomp" = "yes"; then
-    all_features=`feature_list | cut -f 1 -d ' '`
-    add_feature native-compilation
-fi
+
 if test "$emacs_slim_build" = "yes"; then
     dependency_exclusions="$dependency_slim_exclusions"
 fi

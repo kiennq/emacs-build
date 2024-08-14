@@ -49,11 +49,18 @@ jobs:
           - os: windows-2022
             shell: powershell
             msystem: MINGW64
+            build_options: --with-rsvg --with-mps
           - os: windows-2022
             shell: powershell
             msystem: UCRT64
+            build_options: --with-rsvg --with-mps
+          - os: windows-2022
+            shell: powershell
+            msystem: UCRT64
+            build_options: --variant nomps --with-rsvg --without-mps
           - os: ubuntu-22.04
             shell: bash
+            build_options: --with-rsvg --with-mps --without-xwidgets
 
     # The type of runner that the job will run on
     runs-on: ${{ matrix.os }}
@@ -103,19 +110,19 @@ jobs:
         if: runner.os == 'Windows'
         # Require --with-* flags, else the deps will not be included properly
         run: |
-          .\emacs-build.cmd --slim --with-rsvg --with-mps --branch ${{ needs.prepare_env.outputs.commit }} --build
+          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --build ${{ matrix.build_options }}
 
       - name: Package Emacs
         if: runner.os == 'Windows'
         run: |
-          .\emacs-build.cmd --slim --with-rsvg --branch ${{ needs.prepare_env.outputs.commit }} --pack-all
+          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --pack-all ${{ matrix.build_options }}
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'
         run: |
           chmod 755 ./emacs-build-unix.sh
           mkdir -p ./zips
-          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips --with-mps --with-xinput2 --without-xwidgets
+          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips ${{ matrix.build_options }}
 
       # Upload release for each build
       - name: Upload binaries to release

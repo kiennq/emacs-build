@@ -478,6 +478,7 @@ emacs_build_build_dir="$emacs_build_root/build"
 emacs_build_install_dir="$emacs_build_root/pkg"
 emacs_build_zip_dir="$emacs_build_root/zips"
 emacs_strip_executables="no"
+emacs_pkg_var=""
 
 # CFLAGS="-Ofast -fno-finite-math-only \
 #         -fassociative-math -fno-signed-zeros -frename-registers -funroll-loops \
@@ -521,6 +522,8 @@ while test -n "$*"; do
         --pack-all) add_actions action1_ensure_packages action3_package_deps action2.2_install action5_package_all;;
         # --pack-all) add_actions action1_ensure_packages action2.2_install;;
 
+        --variant) shift; emacs_pkg_var="-$1";;
+
         --pdf-tools) add_actions action2.2_install action3_pdf_tools;;
         --mu) add_actions action2.2_install action3_mu;;
         --isync) add_actions action3_isync;;
@@ -556,19 +559,25 @@ inactive_features=`unique_list $inactive_features`
 ensure_mingw_build_software
 
 emacs_extensions=""
+
 emacs_branch_name=`git_branch_name_to_file_name ${emacs_branch}`
+if test "$emacs_branch_name" != "$emacs_branch"; then
+    echo Emacs branch ${emacs_branch} renamed to ${emacs_branch_name} to avoid filesystem problems.
+fi
+
 emacs_source_dir="$emacs_build_git_dir/$emacs_branch_name"
 emacs_build_dir="$emacs_build_build_dir/$emacs_branch_name-$architecture"
 emacs_install_dir="$emacs_build_install_dir/$emacs_branch_name-$architecture"
 emacs_full_install_dir="${emacs_install_dir}-full"
-emacs_nodepsfile="$emacs_build_root/zips/emacs-${emacs_branch_name}-${architecture}-nodeps.zip"
-emacs_depsfile="$emacs_build_root/zips/emacs-${emacs_branch_name}-${architecture}-deps.zip"
-emacs_distfile="$emacs_build_root/zips/emacs-${emacs_branch_name}-${architecture}-full.zip"
+
+emacs_pkg_prefix="emacs-${emacs_branch_name}-${architecture}${emacs_pkg_var}"
+
+emacs_nodepsfile="$emacs_build_root/zips/${emacs_pkg_prefix}-nodeps.zip"
+emacs_depsfile="$emacs_build_root/zips/${emacs_pkg_prefix}-deps.zip"
+emacs_distfile="$emacs_build_root/zips/${emacs_pkg_prefix}-full.zip"
 emacs_srcfile="$emacs_build_root/zips/emacs-${emacs_branch_name}-src.zip"
 emacs_dependencies=""
-if test "$emacs_branch_name" != "$emacs_branch"; then
-    echo Emacs branch ${emacs_branch} renamed to ${emacs_branch_name} to avoid filesystem problems.
-fi
+
 for action in $actions; do
     if $action 2>&1 ; then
         echo Action $action succeeded.

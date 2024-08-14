@@ -46,13 +46,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2022
             shell: powershell
             msystem: MINGW64
-          - os: windows-latest
+          - os: windows-2022
             shell: powershell
             msystem: UCRT64
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             shell: bash
 
     # The type of runner that the job will run on
@@ -115,7 +115,7 @@ jobs:
         run: |
           chmod 755 ./emacs-build-unix.sh
           mkdir -p ./zips
-          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips --with-mps --without-xwidgets
+          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips --with-mps --with-xinput2 --without-xwidgets
 
       # Upload release for each build
       - name: Upload binaries to release

@@ -9,7 +9,7 @@ function action3_gzip () {
              && ensure_packages gzip \
              && msys2_extra_package "msys2-runtime" "/" "" "$gzip_zip_file" \
              && cd "${gzip_build_dir}" \
-             && zip -9vr "$gzip_zip_file" "usr") || return -1
+             && zip -9r "$gzip_zip_file" "usr") || return -1
     fi
     emacs_extensions="$gzip_zip_file $emacs_extensions"
 }

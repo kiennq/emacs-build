@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap8="http://schemas.microsoft.com/appx/manifest/uap/windows10/8"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap8 rescap">
+  <!--Package created by MSIX Packaging Tool version: -->
+  <Identity Name="emacs-k"
+    Publisher="CN=GNU, OID.2.25.311729368913984317654407730594956997722=1"
+    Version="{{version}}" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Emacs</DisplayName>
+    <PublisherDisplayName>GNU</PublisherDisplayName>
+    <Description>EmacsDev</Description>
+    <Logo>share\icons\hicolor\128x128\apps\emacs.png</Logo>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.16299.0"
+      MaxVersionTested="10.0.22000.1" />
+  </Dependencies>
+  <Applications>
+    <Application Id="emacs" Executable="bin\emacs.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements BackgroundColor="transparent"
+        DisplayName="emacs"
+        Square150x150Logo="share\icons\hicolor\128x128\apps\emacs.png"
+        Square44x44Logo="share\icons\hicolor\48x48\apps\emacs.png"
+        Description="emacs" />
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
+            <uap8:ExecutionAlias Alias="emacs.exe"/>
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+    <Application Id="emacsclient" Executable="bin\emacsclient.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements BackgroundColor="transparent"
+        DisplayName="emacsclient"
+        Square150x150Logo="share\icons\hicolor\128x128\apps\emacs.png"
+        Square44x44Logo="share\icons\hicolor\48x48\apps\emacs.png"
+        Description="emacsclient" />
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
+            <uap8:ExecutionAlias Alias="emacsclient.exe"/>
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+    <Application Id="emacsclientw" Executable="bin\emacsclientw.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements BackgroundColor="transparent"
+        DisplayName="emacsclientw"
+        Square150x150Logo="share\icons\hicolor\128x128\apps\emacs.png"
+        Square44x44Logo="share\icons\hicolor\48x48\apps\emacs.png"
+        Description="emacsclientw" />
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
+            <uap8:ExecutionAlias Alias="emacsclientw.exe"/>
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+    <Application Id="runemacs" Executable="bin\runemacs.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements BackgroundColor="transparent"
+        DisplayName="runemacs"
+        Square150x150Logo="share\icons\hicolor\128x128\apps\emacs.png"
+        Square44x44Logo="share\icons\hicolor\48x48\apps\emacs.png"
+        Description="runemacs" />
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
+            <uap8:ExecutionAlias Alias="runemacs.exe"/>
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

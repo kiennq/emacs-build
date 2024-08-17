@@ -197,11 +197,6 @@ function action0_clone ()
     if test "$emacs_apply_patches" = "yes"; then
         apply_patches "$emacs_source_dir" || true
     fi
-
-    if test $GITHUB_ENV; then
-        echo "EMACS_COMMIT=`git_version $emacs_source_dir`" >> $GITHUB_ENV
-        echo "EMACS_MAJOR_VER=`cat $emacs_source_dir/configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`" >> $GITHUB_ENV
-    fi
 }
 
 function action1_ensure_packages ()
@@ -303,14 +298,14 @@ function action4_package_emacs ()
     rm -f "$emacs_nodepsfile" "$emacs_srcfile"
     mkdir -p `dirname "$emacs_nodepsfile"`
     cd "$emacs_install_dir"
-    if zip -9vr "$emacs_nodepsfile" *; then
+    if zip -9r "$emacs_nodepsfile" *; then
         echo Built $emacs_nodepsfile; echo
     else
         echo Failed to compress distribution file $emacs_nodepsfile; echo
         return -1
     fi
     cd "$emacs_source_dir"
-    if zip -x '.git/*' -9vr "$emacs_srcfile" *; then
+    if zip -x '.git/*' -9r "$emacs_srcfile" *; then
         echo Built source package $emacs_srcfile
     else
         echo Failed to compress sources $emacs_srcfile; echo
@@ -330,7 +325,7 @@ function action5_package_all ()
     done
     rm -rf "$emacs_full_install_dir"
     if cp -rfp "$emacs_install_dir" "$emacs_full_install_dir"; then
-        rm -f "$emacs_distfile"
+        rm -f "${emacs_distfile}"
         cd "$emacs_full_install_dir"
         for zipfile in "$emacs_depsfile" $emacs_extensions; do
             echo Unzipping $zipfile
@@ -341,13 +336,21 @@ function action5_package_all ()
                 return -1
             fi
         done
+
         emacs_build_strip_exes "$emacs_full_install_dir"
-        if test "$emacs_compress_files" = "no"; then
-            xargs zip -9v "$emacs_distfile" ./*
+        find . -type f | sort | list_filter -i "$packing_slim_exclusion" | xargs rm -f
+
+        if test "$emacs_pkg_msix" = "yes"; then
+            man_file=`cygpath -w "$emacs_build_root/template/appxmanifest.t.xml"`
+            pkg_version="${EMACS_PKG_VERSION:-0.0.0.0}"
+            dist_file=`cygpath -w "$emacs_build_root/zips/${emacs_pkg_prefix}.msix"`
+            script_file=`cygpath -w "$emacs_build_root/scripts/create_msix.ps1"`
+
+            echo Creating $dist_file package with version $pkg_version and manifest $man_file
+            powershell.exe -nop -ex bypass -c "& {$script_file -m $man_file -v $pkg_version -d . -p $dist_file}"
         else
-            # find . -type f | sort | dependency_filter > a.txt
-            find . -type f | sort | dependency_filter "$packing_slim_exclusion" \
-                | xargs zip -9v "$emacs_distfile"
+            echo Creating zip package
+            zip -9 -r "${emacs_distfile}" *
         fi
     fi
 }
@@ -390,14 +393,6 @@ function add_feature () {
 
 function add_actions () {
     actions="$actions $*"
-}
-
-function dependency_filter () {
-    if test -z "$1"; then
-        cat -
-    else
-        grep -P -v "^(`echo $1 | sed 's,[ \n],|,g'`)" -
-    fi
 }
 
 check_mingw_architecture
@@ -453,6 +448,7 @@ var
 
 packing_slim_exclusion="
 .*share/((?!emacs)(?!icons)(?!info)(?!licenses))
+.*share/emacs/.*/lisp/leim
 .*share/emacs/.*/lisp/play
 "
 
@@ -462,12 +458,13 @@ add_all_features
 
 actions=""
 do_clean=""
-debug_dependency_list="false"
+debug_dependency_list=no
 emacs_compress_files=no
 emacs_build_version=0.4
 emacs_slim_build=no
 emacs_build_threads=$((`nproc`*2))
 emacs_apply_patches=yes
+emacs_pkg_msix=no
 # This is needed for pacman to return the right text
 export LANG=C
 emacs_repo=https://github.com/emacs-mirror/emacs.git
@@ -508,7 +505,7 @@ while test -n "$*"; do
         --compress) emacs_compress_files=yes;;
         --no-compress) emacs_compress_files=no;;
         --debug) set -x;;
-        --debug-dependencies) debug_dependency_list="true";;
+        --debug-dependencies) debug_dependency_list=yes;;
 
         --clean) add_actions action0_clean;;
         --clean-all) add_actions action0_clean action0_clean_rest;;
@@ -520,6 +517,7 @@ while test -n "$*"; do
         --deps) add_actions action1_ensure_packages action3_package_deps;;
         --pack-emacs) add_actions action2.2_install action4_package_emacs;;
         --pack-all) add_actions action1_ensure_packages action3_package_deps action2.2_install action5_package_all;;
+        --msix) emacs_pkg_msix=yes;;
         # --pack-all) add_actions action1_ensure_packages action2.2_install;;
 
         --variant) shift; emacs_pkg_var="-$1";;
@@ -534,7 +532,6 @@ while test -n "$*"; do
         --test-mu) add_actions test_mu;;
         --test-isync) add_actions test_isync;;
         --test-aspell) add_actions test_aspell;;
-
 
         -?|-h|--help) write_help; exit 0;;
         --features) write_features; exit 0;;

@@ -82,6 +82,23 @@ function apply_patches ()
     return $error
 }
 
+function list_filter () {
+    while test -n "$*"; do
+        case $1 in
+            -e) shift;
+                grep -P -v "^(`echo $1 | sed 's,[ \n],|,g'`)" -;
+                return 0;;
+            -i) shift;
+                grep -P "`echo $1 | sed 's,[ \n],|,g'`" -;
+                return 0;;
+            *) echo "Unknown option: $1"; return -1;;
+        esac
+        shift
+    done
+
+    cat -
+}
+
 function raw_dependencies_wo_versions ()
 {
     local munge_pgks="
@@ -107,7 +124,7 @@ function full_dependency_list ()
     local avoid_prefix="$4"
     local oldpackages
     local dependencies
-    if "$debug_dependency_list"; then
+    if test "$debug_dependency_list" = "yes"; then
         local newpackages
         errcho "Debugging package list for $3"
         newpackages="$1"
@@ -168,7 +185,7 @@ function package_dependencies ()
     rm -f "$zipfile"
     mkdir -p `dirname "$zipfile"`
     cd $mingw_dir
-    if test -n "$debug_dependency_list"; then
+    if test "$debug_dependency_list" = "yes"; then
         echo Files prior to filter
         pacman -Ql $dependencies | cut -d ' ' -f 2 | sort | uniq \
             | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g"
@@ -176,12 +193,12 @@ function package_dependencies ()
         echo $slim_exclusions
         echo Files to package
         pacman -Ql $dependencies | cut -d ' ' -f 2 | sort | uniq \
-            | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g" | dependency_filter "$dependency_exclusions"
+            | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g" | list_filter -e "$dependency_exclusions"
     fi
     echo Packing dependency files from root dir $mingw_dir
     pacman -Ql $dependencies | cut -d ' ' -f 2 | sort | uniq \
         | grep "^$mingw_dir" | sed -e "s,^$mingw_dir,,g" \
-        | dependency_filter "$dependency_exclusions" | xargs zip -9v $zipfile
+        | list_filter -e "$dependency_exclusions" | xargs zip -9 $zipfile
 }
 
 function prepare_source_dir ()

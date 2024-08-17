@@ -32,9 +32,11 @@ jobs:
 
           echo "commit=${commit}" >> $GITHUB_ENV
           echo "version=${version}" >> $GITHUB_ENV
+          echo "pkg_version=${major_ver}.${{ github.run_number }}.0.0" >> $GITHUB_ENV
     outputs:
       repo: ${{ env.EMACS_REPO }}
       version: ${{ env.version }}
+      pkg_version: ${{ env.pkg_version }}
       commit: ${{ env.commit }}
 
   build:
@@ -49,15 +51,15 @@ jobs:
           - os: windows-2022
             shell: powershell
             msystem: MINGW64
-            build_options: --with-rsvg --with-mps
+            build_options: --with-rsvg --without-mps
           - os: windows-2022
             shell: powershell
             msystem: UCRT64
-            build_options: --with-rsvg --with-mps
+            build_options: --with-rsvg --without-mps
           - os: windows-2022
             shell: powershell
             msystem: UCRT64
-            build_options: --variant nomps --with-rsvg --without-mps
+            build_options: --variant mps --with-rsvg --with-mps
           - os: ubuntu-22.04
             shell: bash
             build_options: --with-rsvg --with-mps --without-xwidgets
@@ -67,6 +69,7 @@ jobs:
     env:
       MSYS2_DIR: C:\msys64
       EMACS_REPO: ${{ needs.prepare_env.outputs.repo }}
+      EMACS_PKG_VERSION: ${{ needs.prepare_env.outputs.pkg_version }}
 
     defaults:
       run:
@@ -112,10 +115,21 @@ jobs:
         run: |
           .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --build ${{ matrix.build_options }}
 
+      - name: Install winget
+        if: runner.os == 'Windows'
+        uses: Cyberboss/install-winget@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install MSIXHeroCLI
+        if: runner.os == 'Windows'
+        run: winget install msixhero --disable-interactivity --accept-source-agreements
+
       - name: Package Emacs
         if: runner.os == 'Windows'
         run: |
-          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --pack-all ${{ matrix.build_options }}
+          $env:MSIXHeroCLI = &where.exe MSIXHeroCLI
+          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --msix --pack-all ${{ matrix.build_options }}
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'
@@ -130,7 +144,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/*{-full.zip,.deb}
+          file: ./zips/*{-full.zip,.deb,.msix}
           file_glob: true
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}

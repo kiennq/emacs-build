@@ -345,9 +345,11 @@ function action5_package_all ()
             pkg_version="${EMACS_PKG_VERSION:-0.0.0.0}"
             dist_file=`cygpath -w "$emacs_build_root/zips/${emacs_pkg_prefix}.msix"`
             script_file=`cygpath -w "$emacs_build_root/scripts/create_msix.ps1"`
+            cert_file=`cygpath -w "$emacs_build_root/certs/emacs-cert.pfx"`
+            secret="${EMACS_CERT_SECRET:-cert!emacs}"
 
-            echo Creating $dist_file package with version $pkg_version and manifest $man_file
-            powershell.exe -nop -ex bypass -c "& {$script_file -m $man_file -v $pkg_version -d . -p $dist_file}"
+            echo Creating $dist_file package with version $pkg_version
+            powershell.exe -nop -ex bypass -c "& {$script_file -m $man_file -v $pkg_version -d . -p $dist_file -c $cert_file -s $secret}"
         else
             echo Creating zip package
             zip -9 -r "${emacs_distfile}" *

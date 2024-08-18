@@ -70,6 +70,7 @@ jobs:
       MSYS2_DIR: C:\msys64
       EMACS_REPO: ${{ needs.prepare_env.outputs.repo }}
       EMACS_PKG_VERSION: ${{ needs.prepare_env.outputs.pkg_version }}
+      EMACS_CERT_SECRET: ${{ secrets.EMACS_CERT_SECRET }}
 
     defaults:
       run:

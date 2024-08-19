@@ -1,0 +1,26 @@
+From fe26af03affe7b00e61b8faba52053e23de68254 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Tue, 24 Sep 2024 01:24:39 -0700
+Subject: [PATCH 04/11] package-quickstart-refresh: dont require info, delay
+ load instead
+
+---
+ lisp/emacs-lisp/package.el | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lisp/emacs-lisp/package.el b/lisp/emacs-lisp/package.el
+index 82fcf439a..e8773c6cf 100644
+--- a/lisp/emacs-lisp/package.el
++++ b/lisp/emacs-lisp/package.el
+@@ -4665,7 +4665,7 @@ find FILE."
+       (let ((info-dirs
+              (mapcar #'package--quickstart-rel (butlast Info-directory-list))))
+         (when info-dirs
+-          (pp `(progn (require 'info)
++          (pp `(with-eval-after-load 'info
+                       (info-initialize)
+                       (setq Info-directory-list
+                             (append (list . ,info-dirs) Info-directory-list)))
+-- 
+2.46.0.windows.1
+

@@ -1,7 +1,7 @@
-From 2bde099a725fdaad72f08c59fcd459bfc8f2fe85 Mon Sep 17 00:00:00 2001
+From 1469bacfaf7157e92009ea5c1ec4ca9e17126901 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Sun, 11 Aug 2024 03:37:59 -0700
-Subject: [PATCH 2/3] mingw64: support mingw64
+Subject: [PATCH 2/6] mingw64: support mingw64
 
 ---
  code/comm.gmk   | 18 ++++++++++------
@@ -557,5 +557,5 @@ index e10e832..765df99 100644
  # Put platform compiler flags like -ansi -pedantic into CFLAGS only
  # after checking for sqlite3.h -- that header doesn't compile with
 -- 
-2.45.2.vfs.0.1
+2.46.0.windows.1
 

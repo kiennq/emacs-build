@@ -1,0 +1,27 @@
+From bb66aa9eae0c6645f07cc1a4b2b07d9ac0f81046 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Tue, 1 Apr 2025 10:41:46 -0700
+Subject: [PATCH] dump_map_file_w32: fix bad merge endif
+
+---
+ src/pdumper.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/pdumper.c b/src/pdumper.c
+index 9de56c2f4..0bdaa4110 100644
+--- a/src/pdumper.c
++++ b/src/pdumper.c
+@@ -4879,8 +4879,9 @@ dump_anonymous_release (void *addr, size_t size)
+   emacs_abort ();
+ #endif
+ }
++#endif /* not HAVE_MPS */
+ 
+-#elif VM_SUPPORTED == VM_MS_WINDOWS && !defined HAVE_MPS
++#if VM_SUPPORTED == VM_MS_WINDOWS && !defined HAVE_MPS
+ static void *
+ dump_map_file_w32 (void *base, int fd, off_t offset, size_t size,
+ 		   enum dump_memory_protection protection)
+-- 
+2.49.0.windows.1
+

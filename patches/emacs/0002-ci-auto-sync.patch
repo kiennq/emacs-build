@@ -1,7 +1,7 @@
-From a341ffe717063434e8acfcfe1f8af70e25426c0c Mon Sep 17 00:00:00 2001
+From e6e5bd18b0166f8b491c6e4588740967fbf1e741 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Tue, 6 Aug 2024 12:38:45 -0700
-Subject: [PATCH 1/7] ci: auto-sync
+Subject: [PATCH 02/12] ci: auto-sync
 
 ---
  .github/workflows/sync.yml | 32 ++++++++++++++++++++++++++++++++
@@ -11,7 +11,7 @@ Subject: [PATCH 1/7] ci: auto-sync
 
 diff --git a/.github/workflows/sync.yml b/.github/workflows/sync.yml
 new file mode 100644
-index 00000000000..9396c47d531
+index 000000000..e8e074474
 --- /dev/null
 +++ b/.github/workflows/sync.yml
 @@ -0,0 +1,32 @@
@@ -48,13 +48,14 @@ index 00000000000..9396c47d531
 +          echo $upstream_branch | xargs -n1 | xargs -I{} git merge --no-edit upstream/{}
 +          git push origin -f
 diff --git a/.gitignore b/.gitignore
-index c1f31514d06..ca97c294483 100644
+index 5655ee992..fb1ceaaca 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -27,6 +27,6 @@
+@@ -27,6 +27,7 @@
  !.gitignore
  !.gitlab-ci.yml
  !.mailmap
++!.github/
  
  # Built by 'autogen.sh'.
  /aclocal.m4

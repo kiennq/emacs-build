@@ -1,0 +1,360 @@
+From c66667bad9b3b044d929a50362f571050aed1bfa Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sat, 24 Aug 2024 12:51:02 -0700
+Subject: [PATCH 4/7] Fix register scanning on FreeBSD and Linux
+
+Author: Richard Brooksby <rb@ravenbrook.com>
+Date:   Mon Jan 16 23:21:04 2023 +0000
+
+    Catch-up merge master into branch/2020-09-01/regscan to get full CI build and test, and prepare for review and merge.
+
+Author: Gareth Rees <gdr@ravenbrook.com>
+Date:   Tue Jun 4 14:09:05 2019 +0100
+
+    Restore assembly code for spilling callee-save registers.
+
+    This code was previously removed in change 194595 but the result was
+    not reliable as noted in job004158.
+---
+ code/ss.h                       |  60 ++++++++++++----
+ design/stack-scan-areas.svg     |  23 +++---
+ design/stack-scan.txt           | 121 ++++++++++++++------------------
+ manual/source/topic/porting.rst |   9 ++-
+ 4 files changed, 114 insertions(+), 99 deletions(-)
+
+diff --git a/code/ss.h b/code/ss.h
+index f05ff67..32b0830 100644
+--- a/code/ss.h
++++ b/code/ss.h
+@@ -14,18 +14,9 @@
+ #include "mpm.h"
+ 
+ 
+-/* StackContext -- some of the mutator's state
+- *
+- * The jumpBuffer is used to capture most of the mutator's state on
+- * entry to the MPS, but can't capture it all.  See
+- * <design/stack-scan#.sol.setjmp.scan>.
+- */
++/* StackContext -- some of the mutator's state */
+ 
+-#include <setjmp.h>
+-
+-typedef struct StackContextStruct {
+-  jmp_buf jumpBuffer;
+-} StackContextStruct;
++typedef struct StackContextStruct StackContextStruct;
+ 
+ 
+ /* StackHot -- capture a hot stack pointer
+@@ -33,6 +24,7 @@ typedef struct StackContextStruct {
+  * Sets *stackOut to a stack pointer that includes the current frame.
+  */
+ 
++ATTRIBUTE_NOINLINE
+ void StackHot(void **stackOut);
+ 
+ 
+@@ -59,6 +51,46 @@ void StackHot(void **stackOut);
+ 
+ /* STACK_CONTEXT_SAVE -- save the callee-saves and stack pointer */
+ 
++#if (defined(MPS_BUILD_GC) || defined(MPS_BUILD_LL)) && defined(MPS_ARCH_I3)
++
++struct StackContextStruct {
++  Word calleeSave[4];
++};
++
++#define STACK_CONTEXT_SAVE(sc)                                  \
++  BEGIN                                                         \
++    Word *_save = (sc)->calleeSave;                             \
++    __asm__ volatile ("mov %%ebx, %0" : "=m" (_save[0]));       \
++    __asm__ volatile ("mov %%esi, %0" : "=m" (_save[1]));       \
++    __asm__ volatile ("mov %%edi, %0" : "=m" (_save[2]));       \
++    __asm__ volatile ("mov %%ebp, %0" : "=m" (_save[3]));       \
++  END
++
++#elif (defined(MPS_BUILD_GC) || defined(MPS_BUILD_LL)) && defined(MPS_ARCH_I6)
++
++struct StackContextStruct {
++  Word calleeSave[6];
++};
++
++#define STACK_CONTEXT_SAVE(sc)                                  \
++  BEGIN                                                         \
++    Word *_save = (sc)->calleeSave;                             \
++    __asm__ volatile ("mov %%rbp, %0" : "=m" (_save[0]));       \
++    __asm__ volatile ("mov %%rbx, %0" : "=m" (_save[1]));       \
++    __asm__ volatile ("mov %%r12, %0" : "=m" (_save[2]));       \
++    __asm__ volatile ("mov %%r13, %0" : "=m" (_save[3]));       \
++    __asm__ volatile ("mov %%r14, %0" : "=m" (_save[4]));       \
++    __asm__ volatile ("mov %%r15, %0" : "=m" (_save[5]));       \
++  END
++
++#else /* jmp_buf platforms */
++
++#include <setjmp.h>
++
++struct StackContextStruct {
++  jmp_buf jumpBuffer;
++};
++
+ #if defined(MPS_OS_XC)
+ 
+ /* We call _setjmp rather than setjmp because we can be confident what
+@@ -74,7 +106,9 @@ void StackHot(void **stackOut);
+ 
+ #define STACK_CONTEXT_SAVE(sc) ((void)setjmp((sc)->jumpBuffer))
+ 
+-#endif /* platform defines */
++#endif /* jmp_buf platforms */
++
++#endif /* platform specific code */
+ 
+ 
+ /* StackScan -- scan the mutator's stack and registers
+@@ -84,7 +118,7 @@ void StackHot(void **stackOut);
+  */
+ 
+ extern Res StackScan(ScanState ss, void *stackCold,
+-                      mps_area_scan_t scan_area, void *closure);
++                     mps_area_scan_t scan_area, void *closure);
+ 
+ 
+ #endif /* ss_h */
+diff --git a/design/stack-scan-areas.svg b/design/stack-scan-areas.svg
+index 285cdad..020bc43 100644
+--- a/design/stack-scan-areas.svg
++++ b/design/stack-scan-areas.svg
+@@ -13,7 +13,7 @@
+    height="441.15668pt"
+    id="svg1343"
+    sodipodi:docname="stack-scan-areas.svg"
+-   inkscape:version="0.92.2 5c3e80d, 2017-08-06">
++   inkscape:version="0.91 r13725">
+   <sodipodi:namedview
+      pagecolor="#ffffff"
+      bordercolor="#666666"
+@@ -29,7 +29,7 @@
+      showgrid="true"
+      inkscape:zoom="1.1190476"
+      inkscape:cx="312.47393"
+-     inkscape:cy="76.472346"
++     inkscape:cy="362.4298"
+      inkscape:window-x="0"
+      inkscape:window-y="0"
+      inkscape:window-maximized="0"
+@@ -54,7 +54,7 @@
+         <dc:format>image/svg+xml</dc:format>
+         <dc:type
+            rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+-        <dc:title></dc:title>
++        <dc:title />
+       </cc:Work>
+     </rdf:RDF>
+   </metadata>
+@@ -346,16 +346,15 @@
+      style="fill:none;fill-opacity:1;stroke:#000000;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1" />
+   <text
+      id="text1305"
+-     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12px;font-family:Verdana;-inkscape-font-specification:'Verdana, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-feature-settings:normal;text-align:start;writing-mode:lr-tb;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;stroke-dasharray:none;stroke-opacity:1"
+-     x="181.70482"
+-     y="219.94661">
++     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12px;line-height:125%;font-family:Verdana;-inkscape-font-specification:'Verdana, Normal';text-align:start;writing-mode:lr-tb;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;stroke-dasharray:none;stroke-opacity:1"
++     x="176.9048"
++     y="231.14665"
++     sodipodi:linespacing="125%">
+     <tspan
+-       font-size="12"
+-       font-weight="500"
+-       x="212.62843"
+-       y="230.94661"
+-       id="tspan1303"
+-       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:12px;font-family:Verdana;-inkscape-font-specification:'Verdana, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-feature-settings:normal;text-align:start;writing-mode:lr-tb;text-anchor:start">jmp_buf</tspan>
++       sodipodi:role="line"
++       id="tspan4344"
++       x="176.9048"
++       y="231.14665">StackContextStruct</tspan>
+   </text>
+   <g
+      id="g2370"
+diff --git a/design/stack-scan.txt b/design/stack-scan.txt
+index e98621b..e683188 100644
+--- a/design/stack-scan.txt
++++ b/design/stack-scan.txt
+@@ -78,10 +78,6 @@ unnecessary pinning and zone pollution; see job003525_.)
+ _`.req.setjmp`: The implementation must follow the C Standard in its
+ use of the ``setjmp()`` macro. (So that it is reliable and portable.)
+ 
+-_`.req.assembly.not`: The implementation should not use assembly
+-language. (So that it can be developed in tools like Microsoft Visual
+-Studio that don't support this.)
+-
+ 
+ Design
+ ------
+@@ -91,12 +87,12 @@ and stack must be recorded when the mutator enters the MPS, if there
+ is a possibility that the MPS might need to know the mutator context.
+ 
+ _`.sol.entry-points.fragile`: The analysis of which entry points might
+-need to save the context (see `.analysis.entry-points`_ below) is fragile.
+-It might be incorrect now, or become incomplete if we refactor the
+-internals of tracing and polling. As a defence against errors of this
+-form, ``StackScan()`` asserts that the context was saved, but if the
+-client program continues from the assertion, it saves the context
+-anyway and continues.
++need to save the context (see `.analysis.entry-points`_ below) is
++fragile. It might be incorrect now, or become incomplete if we
++refactor the internals of tracing and polling. As a defence against
++errors of this form, ``StackScan()`` asserts that the context was
++saved, but if the client program continues from the assertion, it
++saves the context anyway and continues.
+ 
+ _`.sol.registers`: Implementations spill the root registers onto the
+ stack so that they can be scanned there.
+@@ -108,69 +104,23 @@ _`.sol.registers.root.justify`: The caller-save registers will have
+ been spilled onto the stack by the time the MPS is entered, so will be
+ scanned by the stack scan.
+ 
+-_`.sol.setjmp`: The values in callee-save registers can be found by
+-invoking ``setjmp()``. This forces any of the caller's callee-save
+-registers into either the ``jmp_buf`` or the current stack frame.
+-
+-_`.sol.setjmp.scan`: Although we might be able to decode the jump
+-buffer in a platform-dependent way, it's hard to guarantee that an
+-uncooperative compiler won't temporarily store a reference in any
+-register or stack location. We must conservatively scan the whole of
+-both.
+-
+-_`.sol.setjmp.justify`: The [C1990]_ standard specifies that
+-``jmp_buf``:
+-
+-    is an array type suitable for holding the information needed to
+-    restore a calling environment. The environment of a call to the
+-    ``setjmp()`` macro consists of information sufficient for a call
+-    to the ``longjmp()`` function to return execution to the correct
+-    block and invocation of that block, were it called recursively.
+-
+-We believe that any reasonable implementation of ``setjmp()`` must
+-copy the callee-save registers either into the jump buffer or into the
+-stack frame that invokes it in order to work as described. Otherwise,
+-once the callee-save registers have been overwritten by other function
+-calls, a ``longjmp()`` would result in the callee-save registers
+-having the wrong values. A ``longjmp()`` can come from anywhere, and
+-so the function using ``setjmp()`` can't rely on callee-save registers
+-being saved by callees.
+-
+-_`.sol.stack.hot`: We could decode the frame of the function that
+-invokes ``setjmp()`` from the jump buffer in a platform-specific way,
+-but we can do something simpler (if more hacky) by calling the stub
+-function ``StackHot()`` which takes the address of its argument. So
+-long as this stub function is not inlined into the caller, then on all
+-supported platforms this yields a pointer that is pretty much at the
+-hot end of the frame.
+-
+-_`.sol.stack.hot.noinline`: The reason that ``StackHot()`` must not be
+-inlined is that after inlining, the compiler might place ``stackOut``
+-at a colder stack address than the ``StackContextStruct``, causing the
+-latter not to be scanned. See `mail.gdr.2018-07-11.09-48`_.
+-
+-.. _mail.gdr.2018-07-11.09-48: https://info.ravenbrook.com/mail/2018/07/11/09-48-49/0/
+-
+-_`.sol.stack.nest`: We can take care of scanning the jump buffer
+-itself by storing it in the same stack frame. That way a scan from the
+-hot end determined by `.sol.stack.hot`_ to the cold end will contain
+-all of the roots.
+-
+-_`.sol.stack.platform`: As of version 1.115, all supported platforms
+-are *full* and *descending* so the implementation in ``StackScan()``
+-assumes this. New platforms must check this assumption.
+-
+-_`.sol.xc.alternative`: On macOS, we could use ``getcontext()`` from
+-libunwind (see here_), but that produces deprecation warnings and
+-introduces a dependency on that library.
++_`.sol.registers.root.i3`: On IA-32, the callee-save registers are
++EBX, ESI, EDI and EBP [Fog]_.
+ 
+-.. _here: https://stackoverflow.com/questions/3592914/
++_`.sol.registers.root.i6`: On x86-64, the callee-save registers are
++RBP, RBX, R12, R13, R14, and R15 [Fog]_.
+ 
++_`.sol.assembler`: On platforms that support inline assembler, it is
++straightforward to copy the callee-save registers into the
++``StackContextStruct`` using assembler instructions.
+ 
+-Analysis
+---------
++_`.sol.setjmp`: On platforms that do not support inline assembler (in
++particular, Microsoft Visual C/C++) or where we do not know the
++callee-save registers (the generic or "ANSI" platform), the
++``StackContextStruct`` contains a ``jmp_buf`` structure, and the
++values in callee-save registers are saved by invoking ``setjmp()``.
+ 
+-_`.analysis.setjmp`: The [C1990]_ standard says:
++The [C1990]_ standard says:
+ 
+     An invocation of the ``setjmp`` macro shall appear only in one of
+     the following contexts:
+@@ -195,6 +145,39 @@ And the [C1999]_ standard adds:
+     If the invocation appears in any other context, the behavior is
+     undefined.
+ 
++_`.sol.stack.hot`: We could decode the ``StackContextStruct`` in a
++platform-specific way, but we can do something simpler (if more hacky)
++by calling the stub function ``StackHot()`` which takes the address of
++its argument. So long as this stub function is not inlined into the
++caller, then on all supported platforms this yields a pointer that is
++pretty much at the hot end of the stack.
++
++_`.sol.stack.hot.noinline`: The reason that ``StackHot()`` must not be
++inlined is that after inlining, the compiler might place ``stackOut``
++at a colder stack address than the ``StackContextStruct``, causing the
++latter not to be scanned. See `mail.gdr.2018-07-11.09-48`_.
++
++.. _mail.gdr.2018-07-11.09-48: https://info.ravenbrook.com/mail/2018/07/11/09-48-49/0/
++
++_`.sol.stack.nest`: We can take care of scanning the
++``StackContextStruct`` itself by storing it in the same stack frame.
++That way a scan from the hot end determined by `.sol.stack.hot`_ to
++the cold end will contain all of the roots.
++
++_`.sol.stack.platform`: As of version 1.115, all supported platforms
++are *full* and *descending* so the implementation in ``StackScan()``
++assumes this. New platforms must check this assumption.
++
++_`.sol.xc.alternative`: On macOS, we could use ``getcontext()`` from
++libunwind (see here_), but that produces deprecation warnings and
++introduces a dependency on that library.
++
++.. _here: https://stackoverflow.com/questions/3592914/
++
++
++Analysis
++--------
++
+ _`.analysis.entry-points`: Here's a reverse call graph (in the master
+ sources at changelevel 189652) showing which entry points might call
+ ``StackScan()`` and so need to record the stack context::
+diff --git a/manual/source/topic/porting.rst b/manual/source/topic/porting.rst
+index 87cdf95..be8f13a 100644
+--- a/manual/source/topic/porting.rst
++++ b/manual/source/topic/porting.rst
+@@ -101,11 +101,10 @@ usable.
+    :term:`registers` and :term:`control stack` of the thread that
+    entered the MPS.
+ 
+-   See :ref:`design-stack-scan` for the design, ``ss.h`` for the
+-   interface, and ``ss.c`` for a generic implementation that makes
+-   assumptions about the platform (in particular, that the stack grows
+-   downwards and :c:func:`setjmp` reliably captures the registers; see
+-   the design for details).
++   See :ref:`design-stack-scan` for the design, and ``ss.h`` and
++   ``ss.c`` for the implementation. There is a generic implementation
++   that relies on :c:func:`setjmp` to capture the callee-save
++   registers.
+ 
+ #. The **thread manager** module suspends and resumes :term:`threads`,
+    so that the MPS can gain exclusive access to :term:`memory (2)`,
+-- 
+2.46.0.windows.1
+

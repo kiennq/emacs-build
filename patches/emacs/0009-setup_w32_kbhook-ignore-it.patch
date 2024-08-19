@@ -1,0 +1,39 @@
+From c4c8dc27c3eff7c5ebae097810800acea6736a65 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Tue, 3 Jun 2025 14:10:46 -0700
+Subject: [PATCH] setup_w32_kbhook: ignore it
+
+---
+ src/w32console.c | 2 +-
+ src/w32fns.c     | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/w32console.c b/src/w32console.c
+index 1bca0cadf..e05655323 100644
+--- a/src/w32console.c
++++ b/src/w32console.c
+@@ -913,7 +913,7 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+   EnumThreadWindows (GetCurrentThreadId (), find_ime_window, (LPARAM) &hwnd);
+ 
+   /* Set up the keyboard hook.  */
+-  setup_w32_kbdhook (hwnd);
++  /* setup_w32_kbdhook (hwnd); */
+ }
+ 
+ 
+diff --git a/src/w32fns.c b/src/w32fns.c
+index d7444f11e..78135be1a 100644
+--- a/src/w32fns.c
++++ b/src/w32fns.c
+@@ -5699,7 +5699,7 @@ #define WM_TOUCH 576
+ 
+ #ifdef WINDOWSNT
+     case WM_CREATE:
+-      setup_w32_kbdhook (hwnd);
++      /* setup_w32_kbdhook (hwnd); */
+       goto dflt;
+ #endif
+ 
+-- 
+2.46.0.windows.1
+

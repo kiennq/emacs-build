@@ -1,0 +1,96 @@
+From 5bb31c48276833e800a582820fead0bd9177fca4 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 20 Apr 2025 18:05:43 -0700
+Subject: [PATCH 7/7] build: make warnings error only in debug build
+
+---
+ code/gc.gmk    | 3 +--
+ code/gp.gmk    | 4 ++--
+ code/ll.gmk    | 3 +--
+ code/mingw.gmk | 3 +--
+ 4 files changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/code/gc.gmk b/code/gc.gmk
+index 1ab9fbd..c2e1b8e 100644
+--- a/code/gc.gmk
++++ b/code/gc.gmk
+@@ -10,7 +10,7 @@
+ # common makefile fragment (<code/comm.gmk>) requires.
+ 
+ CC = gcc
+-CFLAGSDEBUG = -O -g3
++CFLAGSDEBUG = -O -g3 -Werror
+ CFLAGSOPT = -O2 -g3
+ 
+ # Warnings that might be enabled by clients <design/config/#.warning.impl>.
+@@ -18,7 +18,6 @@ CFLAGSCOMPILER := \
+ -Waggregate-return \
+ -Wall \
+ -Wcast-qual \
+--Werror \
+ -Wextra \
+ -Winline \
+ -Wmissing-prototypes \
+diff --git a/code/gp.gmk b/code/gp.gmk
+index 1b22a9f..af5f707 100644
+--- a/code/gp.gmk
++++ b/code/gp.gmk
+@@ -12,11 +12,11 @@
+ 
+ CC = gcc
+ CFLAGSCOMPILER = \
+-	-ansi -pedantic -Wall -Wextra -Werror -Wpointer-arith \
++	-ansi -pedantic -Wall -Wextra -Wpointer-arith \
+ 	-Wstrict-prototypes -Wmissing-prototypes \
+ 	-Winline -Waggregate-return -Wnested-externs \
+ 	-Wcast-qual -Wshadow -Wwrite-strings -pg
+-CFLAGSDEBUG = -g -ggdb3
++CFLAGSDEBUG = -g -ggdb3 -Werror
+ CFLAGSOPT = -O -g -ggdb3
+ 
+ # gcc -MM generates a dependency line of the form:
+diff --git a/code/ll.gmk b/code/ll.gmk
+index 16ebf0e..0bd8b83 100644
+--- a/code/ll.gmk
++++ b/code/ll.gmk
+@@ -10,7 +10,7 @@
+ # common makefile fragment (<code/comm.gmk>) requires.
+ 
+ CC = clang
+-CFLAGSDEBUG = -O0 -g3
++CFLAGSDEBUG = -O0 -g3 -Werror
+ CFLAGSOPT = -O2 -g3
+ 
+ # Warnings that might be enabled by clients <design/config/#.warning.impl>.
+@@ -21,7 +21,6 @@ CFLAGSCOMPILER := \
+ 	-Wcast-qual \
+ 	-Wconversion \
+ 	-Wduplicate-enum \
+-	-Werror \
+ 	-Wextra \
+ 	-Winline \
+ 	-Wmissing-prototypes \
+diff --git a/code/mingw.gmk b/code/mingw.gmk
+index 229e8b6..00a9feb 100644
+--- a/code/mingw.gmk
++++ b/code/mingw.gmk
+@@ -10,7 +10,7 @@
+ # common makefile fragment (<code/comm.gmk>) requires.
+ 
+ CC = gcc
+-CFLAGSDEBUG = -Og -g3
++CFLAGSDEBUG = -Og -g3 -Werror
+ CFLAGSOPT = -O2 -g3
+ EXEEXT = .exe
+ 
+@@ -19,7 +19,6 @@ CFLAGSCOMPILER := \
+ 	-Waggregate-return \
+ 	-Wall \
+ 	-Wcast-qual \
+-	-Werror \
+ 	-Wextra \
+ 	-Winline \
+ 	-Wmissing-prototypes \
+-- 
+2.46.0.windows.1
+

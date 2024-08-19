@@ -1,0 +1,180 @@
+From 36398538134e88b979a61b6bacb94ad85f9d9bea Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sat, 24 Aug 2024 12:54:11 -0700
+Subject: [PATCH 5/7] Fix some race conditions in xca6ll/hot/amcssth
+
+commit 14adaee7ba1b460606eb5a225daf62a779eacdda
+Merge: e089937 081d79e
+Author: Richard Brooksby <rb@ravenbrook.com>
+Date:   Mon Jan 30 02:49:12 2023 +0000
+
+    Catch-up merge branch 'master' into 59-memory-aware to apply CI and prepare for review
+
+commit e0899374f81f3e51d7b3b637cf683accca998387
+Author: Gareth Rees <gdr@garethrees.org>
+Date:   Sat Dec 24 14:16:10 2022 +0000
+
+    Fix some race conditions in xca6ll/hot/amcssth.
+
+    * Use memory-model-aware builtins in GCC and Clang when a memory
+      location may be written by one thread and read by another, avoiding
+      race conditions due to out-of-order updates on ARM.
+    * Call dylan_make_wrappers while the test is still single-threaded,
+      preventing multiple threads from racing to call it.
+    * Prevent dylan_init from creating a padding object, as we must not
+      have an exact root pointing at a padding object.
+---
+ code/amcssth.c  | 38 ++++++++++++++++++++++++--------------
+ code/fmtdytst.c |  9 +++------
+ code/testlib.h  | 19 +++++++++++++++++++
+ 3 files changed, 46 insertions(+), 20 deletions(-)
+
+diff --git a/code/amcssth.c b/code/amcssth.c
+index 35bd6a1..56011ac 100644
+--- a/code/amcssth.c
++++ b/code/amcssth.c
+@@ -108,19 +108,22 @@ static mps_res_t area_scan(mps_ss_t ss, void *base, void *limit, void *closure)
+ 
+ static void churn(mps_ap_t ap, size_t roots_count)
+ {
+-  size_t i;
+-  size_t r;
++  size_t i, j, r;
+ 
+   ++objs;
+   r = (size_t)rnd();
+   if (r & 1) {
++    mps_addr_t root;
+     i = (r >> 1) % exactRootsCOUNT;
+-    if (exactRoots[i] != objNULL)
+-      cdie(dylan_check(exactRoots[i]), "dying root check");
+-    exactRoots[i] = make(ap, roots_count);
+-    if (exactRoots[(exactRootsCOUNT-1) - i] != objNULL)
+-      dylan_write(exactRoots[(exactRootsCOUNT-1) - i],
+-                  exactRoots, exactRootsCOUNT);
++    atomic_load(&exactRoots[i], &root);
++    if (root != objNULL)
++      cdie(dylan_check(root), "dying root check");
++    root = make(ap, roots_count);
++    atomic_store(&exactRoots[i], &root);
++    j = exactRootsCOUNT - i - 1;
++    atomic_load(&exactRoots[j], &root);
++    if (root != objNULL)
++      dylan_write(root, exactRoots, exactRootsCOUNT);
+   } else {
+     i = (r >> 1) % ambigRootsCOUNT;
+     ambigRoots[(ambigRootsCOUNT-1) - i] = make(ap, roots_count);
+@@ -221,9 +224,11 @@ static void test_pool(const char *name, mps_pool_t pool, size_t roots_count)
+                (unsigned long)collections, objs,
+                (unsigned long)mps_arena_committed(arena));
+ 
+-        for (i = 0; i < exactRootsCOUNT; ++i)
+-          cdie(exactRoots[i] == objNULL || dylan_check(exactRoots[i]),
+-               "all roots check");
++        for (i = 0; i < exactRootsCOUNT; ++i) {
++          mps_addr_t root;
++          atomic_load(&exactRoots[i], &root);
++          cdie(root == objNULL || dylan_check(root), "all roots check");
++        }
+ 
+         if (collections >= collectionsCOUNT / 2 && !walked)
+         {
+@@ -248,9 +253,12 @@ static void test_pool(const char *name, mps_pool_t pool, size_t roots_count)
+             ramping = 0;
+             /* kill half of the roots */
+             for(i = 0; i < exactRootsCOUNT; i += 2) {
+-              if (exactRoots[i] != objNULL) {
+-                cdie(dylan_check(exactRoots[i]), "ramp kill check");
+-                exactRoots[i] = objNULL;
++              mps_addr_t root;
++              atomic_load(&exactRoots[i], &root);
++              if (root != objNULL) {
++                cdie(dylan_check(root), "ramp kill check");
++                root = objNULL;
++                atomic_store(&exactRoots[i], &root);
+               }
+             }
+           }
+@@ -298,6 +306,8 @@ static void test_arena(void)
+   mps_pool_t amc_pool, amcz_pool;
+   void *marker = &marker;
+ 
++  die(dylan_make_wrappers(), "make wrappers");
++
+   MPS_ARGS_BEGIN(args) {
+     MPS_ARGS_ADD(args, MPS_KEY_ARENA_SIZE, testArenaSIZE);
+     MPS_ARGS_ADD(args, MPS_KEY_ARENA_GRAIN_SIZE, rnd_grain(testArenaSIZE));
+diff --git a/code/fmtdytst.c b/code/fmtdytst.c
+index 6a48860..97b1f30 100644
+--- a/code/fmtdytst.c
++++ b/code/fmtdytst.c
+@@ -68,7 +68,7 @@ mps_res_t dylan_make_wrappers(void)
+   return MPS_RES_OK;
+ }
+ 
+-/* dylan_init -- turn raw memory into initialised dylan-vector (or pad)
++/* dylan_init -- turn raw memory into initialised dylan-vector
+  *
+  * If the raw memory is large enough, initialises it to a dylan-vector,
+  * whose slots are initialised to either dylan-ints, or valid refs, at
+@@ -78,8 +78,6 @@ mps_res_t dylan_make_wrappers(void)
+  * and "nr_refs" arguments. If "nr_refs" is 0, all slots are
+  * initialized to dylan-ints: this may be useful for making leaf
+  * objects.
+- *
+- * (Makes a pad if the raw memory is too small to hold a dylan-vector)
+  */
+ 
+ mps_res_t dylan_init(mps_addr_t addr, size_t size,
+@@ -93,8 +91,7 @@ mps_res_t dylan_init(mps_addr_t addr, size_t size,
+   if (res != MPS_RES_OK)
+     return res;
+ 
+-  /* If there is enough room, make a vector, otherwise just */
+-  /* make a padding object. */
++  /* If there is enough room, make a vector. */
+   if(size >= sizeof(mps_word_t) * 2) {
+     mps_word_t *p = (mps_word_t *)addr;
+     mps_word_t i, t = (size / sizeof(mps_word_t)) - 2;
+@@ -110,7 +107,7 @@ mps_res_t dylan_init(mps_addr_t addr, size_t size,
+         p[2+i] = (mps_word_t)refs[(r >> 1) % nr_refs]; /* random ptr */
+     }
+   } else {
+-    dylan_pad(addr, size);
++    return MPS_RES_UNIMPL;
+   }
+ 
+   return MPS_RES_OK;
+diff --git a/code/testlib.h b/code/testlib.h
+index 7432faf..0d0dc44 100644
+--- a/code/testlib.h
++++ b/code/testlib.h
+@@ -294,6 +294,25 @@ extern void randomize(int argc, char *argv[]);
+ extern void testlib_init(int argc, char *argv[]);
+ 
+ 
++/* Memory-model-aware operations */
++
++#if defined(MPS_BUILD_GC) || defined(MPS_BUILD_LL)
++
++/* See <https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html>
++ * and <https://clang.llvm.org/docs/LanguageExtensions.html> */
++#define atomic_load(SRC, DEST) __atomic_load(SRC, DEST, __ATOMIC_ACQUIRE)
++#define atomic_store(DEST, SRC) __atomic_store(DEST, SRC, __ATOMIC_RELEASE)
++
++#elif defined(MPS_BUILD_MV)
++
++/* Microsoft Visual C/C++ does not need memory-model-aware load and store as
++ * loads and stores of register-sized values are atomic on Intel. */
++#define atomic_load(SRC, DEST) (*(DEST) = *(SRC))
++#define atomic_store(DEST, SRC) (*(DEST) = *(SRC))
++
++#endif
++
++
+ #endif /* testlib_h */
+ 
+ 
+-- 
+2.46.0.windows.1
+

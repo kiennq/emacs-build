@@ -1,0 +1,26 @@
+From 13325144e33b54a8905c72f7a384967b41199dbe Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sat, 24 Aug 2024 12:57:53 -0700
+Subject: [PATCH 6/7] fix: MSP_PROT_INNER TO sync with
+ RootModePROTECTABLE_INNER
+
+---
+ code/mps.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/code/mps.h b/code/mps.h
+index 46df73f..14b75bf 100644
+--- a/code/mps.h
++++ b/code/mps.h
+@@ -318,7 +318,7 @@ extern mps_rank_t mps_rank_weak(void);
+ 
+ #define MPS_RM_CONST      (((mps_rm_t)1<<0))
+ #define MPS_RM_PROT       (((mps_rm_t)1<<1))
+-#define MPS_RM_PROT_INNER (((mps_rm_t)1<<1))
++#define MPS_RM_PROT_INNER (((mps_rm_t)1<<2))
+ 
+ 
+ /* Allocation Point */
+-- 
+2.46.0.windows.1
+

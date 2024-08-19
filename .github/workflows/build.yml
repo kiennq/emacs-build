@@ -50,16 +50,12 @@ jobs:
         include:
           - os: windows-2022
             shell: powershell
-            msystem: MINGW64
-            build_options: --with-rsvg --without-mps
-          - os: windows-2022
-            shell: powershell
             msystem: UCRT64
             build_options: --with-rsvg --without-mps
           - os: windows-2022
             shell: powershell
             msystem: UCRT64
-            build_options: --variant mps --with-rsvg --with-mps
+            build_options: --variant mps --with-rsvg --with-mps --no-strip
           - os: ubuntu-22.04
             shell: bash
             build_options: --with-rsvg --with-mps --without-xwidgets

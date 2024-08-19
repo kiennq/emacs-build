@@ -1,0 +1,37 @@
+From ff52ce521ef9b5b295d1387543efba9a07d10852 Mon Sep 17 00:00:00 2001
+From: Pip Cet <pipcet@protonmail.com>
+Subject: [PATCH] [MPS] Make one_w32_display_info an ambiguous root
+
+* src/w32term.c (w32_initialize_display_info): Create root
+
+---
+ src/w32term.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/w32term.c b/src/w32term.c
+index ba745c0835..d248fe6b3a 100644
+--- a/src/w32term.c
++++ b/src/w32term.c
+@@ -47,6 +47,7 @@ Copyright (C) 1989, 1993-2025 Free Software Foundation, Inc.
+ #include "window.h"
+ #include "keyboard.h"
+ #include "menu.h"	/* for w32_menu_show */
++#include "igc.h"
+ 
+ #ifdef WINDOWSNT
+ #include "w32.h"	/* for filename_from_utf16, filename_from_ansi */
+@@ -7725,6 +7726,11 @@ w32_initialize_display_info (Lisp_Object display_name)
+ {
+   struct w32_display_info *dpyinfo = &one_w32_display_info;
+ 
++#ifdef HAVE_MPS
++  igc_root_create_ambig (&one_w32_display_info, &one_w32_display_info + 1,
++                        "w32-display-info");
++#endif
++
+   memset (dpyinfo, 0, sizeof (*dpyinfo));
+ 
+   dpyinfo->name_list_element = Fcons (display_name, Qnil);
+-- 
+2.48.1
+

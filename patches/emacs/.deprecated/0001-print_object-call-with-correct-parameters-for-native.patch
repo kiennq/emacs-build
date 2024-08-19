@@ -1,0 +1,28 @@
+From 484f55a5cea5ba8b72cf6cfe464a057f87687858 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 22 May 2025 16:01:51 -0700
+Subject: [PATCH] print_object: call with correct parameters for native-comp
+
+---
+ src/print.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/print.c b/src/print.c
+index 9121db429..25061fa4d 100644
+--- a/src/print.c
++++ b/src/print.c
+@@ -2098,9 +2098,9 @@ print_vectorlike_unreadable (Lisp_Object obj, bool escapeflag, char *buf,
+       {
+ 	struct Lisp_Native_Comp_Unit *cu = XNATIVE_COMP_UNIT (obj);
+ 	print_c_string ("#<native compilation unit: ", printcharfun);
+-	print_object (cu->file, printcharfun, escapeflag);
++	print_object (cu->file, escapeflag, pc);
+ 	printchar (' ', printcharfun);
+-	print_object (cu->optimize_qualities, printcharfun, escapeflag);
++	print_object (cu->optimize_qualities, escapeflag, pc);
+ 	printchar ('>', printcharfun);
+ 	return;
+       }
+-- 
+2.49.0.windows.1
+

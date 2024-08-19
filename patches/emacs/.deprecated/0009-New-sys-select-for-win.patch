@@ -1,7 +1,7 @@
-From 12c00585b8dd7f41e6114b9cc500c9dfc178716a Mon Sep 17 00:00:00 2001
+From 467e87069161a5e2740849acac624644d7bd03cd Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Thu, 4 Jul 2024 23:47:11 -0700
-Subject: [PATCH 3/6] New sys select for win
+Subject: [PATCH 09/11] New sys select for win
 
 * add emulation MsgWaitForMultipleObjects and WaitForMultipleObjects
 * remove useless code
@@ -16,7 +16,7 @@ Co-authored-by: cat <wacshuiguo@163.com>
  2 files changed, 247 insertions(+), 18 deletions(-)
 
 diff --git a/src/w32.h b/src/w32.h
-index 3dc79dabf4b..9bcae072d77 100644
+index 84059278a2..bca8d3defb 100644
 --- a/src/w32.h
 +++ b/src/w32.h
 @@ -29,7 +29,10 @@ #define EMACS_W32_H
@@ -32,7 +32,7 @@ index 3dc79dabf4b..9bcae072d77 100644
    unsigned int bits[FD_SETSIZE / 32];
  } fd_set;
 diff --git a/src/w32proc.c b/src/w32proc.c
-index 40181e09830..3e8c6d7011b 100644
+index 000eb9bee3..e3eb899d06 100644
 --- a/src/w32proc.c
 +++ b/src/w32proc.c
 @@ -63,6 +63,231 @@ #define DEFER_MS_W32_H

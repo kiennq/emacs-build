@@ -1,0 +1,40 @@
+From 14833058edf6be0ec75f31ee99a56519d0e179d4 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Wed, 30 Apr 2025 22:27:07 -0700
+Subject: [PATCH 03/12] makefile: dont build leim
+
+---
+ lisp/Makefile.in | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/lisp/Makefile.in b/lisp/Makefile.in
+index 999ae7402..d2402ba08 100644
+--- a/lisp/Makefile.in
++++ b/lisp/Makefile.in
+@@ -132,12 +132,12 @@ SUBDIRS_SUBDIRS =
+ 
+ # cus-load, finder-inf and autoloads are not explicitly requested by
+ # anything, so we add them here to make sure they get built.
+-all: compile-main $(lisp)/cus-load.el $(lisp)/finder-inf.el generate-ja-dic \
++all: compile-main $(lisp)/cus-load.el $(lisp)/finder-inf.el \
+ 	org-manuals autoloads
+ 
+ PHONY_EXTRAS =
+ .PHONY: all custom-deps finder-data autoloads update-subdirs $(PHONY_EXTRAS) \
+-	generate-ja-dic org-manuals
++	org-manuals
+ 
+ # custom-deps and finder-data both used to scan _all_ the *.el files.
+ # This could lead to problems in parallel builds if automatically
+@@ -405,7 +405,7 @@ .PHONY:
+ 
+ ## make -C ../admin/unidata all should be here, but that would race
+ ## with ../src.  See comments above for loaddefs.
+-gen-lisp: leim semantic
++gen-lisp: semantic
+ 
+ # (re)compile titdic-cnv before recursing into `leim` since its used to
+ # generate some of the Quail source files from tables.
+-- 
+2.46.0.windows.1
+

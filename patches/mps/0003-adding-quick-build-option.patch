@@ -1,7 +1,7 @@
-From 42005083f1efb61ed29bdf3f4541f12a04cfa7f0 Mon Sep 17 00:00:00 2001
+From f39f93bd72341001ed65908162ff17961ed7610c Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Tue, 13 Aug 2024 20:22:21 -0700
-Subject: [PATCH 3/3] adding quick build option
+Subject: [PATCH 3/7] adding quick build option
 
 ---
  Makefile.in   | 11 ++++++++---
@@ -102,5 +102,5 @@ index 765df99..e6fb182 100644
  AC_SUBST(INSTALL_TARGET)
  AC_SUBST(TEST_TARGET)
 -- 
-2.45.2.vfs.0.1
+2.46.0.windows.1
 

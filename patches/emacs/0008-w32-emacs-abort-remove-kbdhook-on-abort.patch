@@ -1,0 +1,38 @@
+From 5c167cdd39854d430577a34940026d2f2ebf0cf1 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sat, 31 Aug 2024 21:20:58 -0700
+Subject: [PATCH 08/10] w32 emacs-abort: remove kbdhook on abort
+
+---
+ src/w32fns.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/w32fns.c b/src/w32fns.c
+index 17221b7347..a199666c7f 100644
+--- a/src/w32fns.c
++++ b/src/w32fns.c
+@@ -3124,6 +3124,10 @@ setup_w32_kbdhook (HWND hwnd)
+ void
+ remove_w32_kbdhook (void)
+ {
++  /* Avoid over release */
++  if (kbdhook.hook_count <= 0)
++    return;
++
+   kbdhook.hook_count--;
+   if (kbdhook.hook_count == 0 && w32_kbdhook_active)
+     {
+@@ -11582,6 +11586,10 @@ emacs_abort (void)
+   if (w32_disable_abort_dialog)
+     abort ();
+ 
++  /* force release low-level keyboard hook for easier to debug */
++  kbdhook.hook_count = 1;
++  remove_w32_kbdhook ();
++
+   int button;
+ 
+   if (noninteractive)
+-- 
+2.46.0.windows.1
+

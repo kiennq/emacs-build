@@ -1,0 +1,25 @@
+From 6c459d7ed7645abc7de1d1c2f17ac3d33b07d9d0 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Wed, 4 Sep 2024 09:30:49 -0700
+Subject: [PATCH 03/10] mps_gen_param_s: increase to 256MB for gc
+
+---
+ src/igc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/igc.c b/src/igc.c
+index 1815dfcba9..5f7b6ccbff 100644
+--- a/src/igc.c
++++ b/src/igc.c
+@@ -4825,7 +4825,7 @@ make_arena (struct igc *gc)
+   MPS_ARGS_END (args);
+   IGC_CHECK_RES (res);
+ 
+-  mps_gen_param_s gens[] = { { 128000, 0.8 }, { 5 * 128000, 0.4 } };
++  mps_gen_param_s gens[] = { { 256000, 0.8 }, { 5 * 256000, 0.4 } };
+   res = mps_chain_create (&gc->chain, gc->arena, ARRAYELTS (gens), gens);
+   IGC_CHECK_RES (res);
+ }
+-- 
+2.46.0.windows.1
+

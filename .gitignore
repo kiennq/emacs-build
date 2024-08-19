@@ -6,3 +6,4 @@ zips
 #*
 msys64
 *.log
+.applied

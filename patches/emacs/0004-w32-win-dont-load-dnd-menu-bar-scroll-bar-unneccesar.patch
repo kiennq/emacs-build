@@ -1,0 +1,65 @@
+From 84ca2a8c2908cbf4b51bfd34aaba72d3b3c0195f Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Wed, 21 May 2025 22:15:05 -0700
+Subject: [PATCH 04/12] w32-win: dont load dnd menu-bar scroll-bar
+ unneccesarily
+
+---
+ lisp/term/w32-win.el | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/lisp/term/w32-win.el b/lisp/term/w32-win.el
+index a1959cd11..37f1332e4 100644
+--- a/lisp/term/w32-win.el
++++ b/lisp/term/w32-win.el
+@@ -71,10 +71,7 @@
+ (eval-when-compile (require 'cl-lib))
+ (require 'frame)
+ (require 'mouse)
+-(require 'scroll-bar)
+ (require 'select)
+-(require 'menu-bar)
+-(require 'dnd)
+ (require 'w32-vars)
+ 
+ (declare-function x-select-font "w32font.c"
+@@ -101,6 +98,7 @@ w32-color-map
+ ;;   (princ event))
+ 
+ (defun w32-handle-dropped-file (window file-name)
++  (require 'dnd)
+   (dnd-handle-multiple-urls
+    window
+    (list
+@@ -142,6 +140,7 @@ w32-drag-n-drop
+ drag-n-drop action in a newly-created frame using its selected-window
+ and that window's buffer."
+   (interactive "e")
++  (require 'dnd)
+   ;; Make sure the drop target has positive co-ords
+   ;; before setting the selected frame - otherwise it
+   ;; won't work.  <skx@tardis.ed.ac.uk>
+@@ -219,6 +218,7 @@ w32-menu-bar-open
+ If FRAME does not have the menu bar enabled, display a text menu using
+ `tmm-menubar'."
+    (interactive "i")
++   (require 'menu-bar)
+    (if menu-bar-mode
+        (w32-send-sys-command ?\xf100 frame)
+      (with-selected-frame (or frame (selected-frame))
+@@ -331,8 +331,10 @@ window-system-initialization
+   ;; that this is only annoying.
+   (setq split-window-keep-point t)
+ 
+-  ;; W32 expects the menu bar cut and paste commands to use the clipboard.
+-  (menu-bar-enable-clipboard)
++  (when menu-bar-mode
++    (require 'menu-bar)
++    ;; W32 expects the menu bar cut and paste commands to use the clipboard.
++    (menu-bar-enable-clipboard))
+ 
+   ;; Don't show the frame name; that's redundant.
+   (setq-default mode-line-frame-identification "  ")
+-- 
+2.46.0.windows.1
+

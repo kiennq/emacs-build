@@ -144,7 +144,7 @@ function emacs_dependencies ()
 function emacs_configure_build_dir ()
 {
     cd "$emacs_build_dir"
-    options="--disable-build-details --without-dbus"
+    options="$emacs_build_options"
     if test "$emacs_compress_files" = "no"; then
         options="$options --without-compress-install"
     else
@@ -163,11 +163,11 @@ function emacs_configure_build_dir ()
     #     fi
     # done
     for f in $features; do
-        options="--with-$f $options"
+        options="$options --with-$f"
     done
 
     for f in $inactive_features; do
-        options="--without-$f $options"
+        options="$options --without-$f"
     done
 
     echo Configuring Emacs with options
@@ -465,6 +465,7 @@ emacs_compress_files=no
 emacs_build_version=0.4
 emacs_slim_build=no
 emacs_build_threads=$((`nproc`*2))
+emacs_build_options="--disable-build-details --without-dbus --enable-link-time-optimization"
 emacs_apply_patches=yes
 emacs_pkg_msix=no
 # This is needed for pacman to return the right text
@@ -483,7 +484,7 @@ emacs_pkg_var=""
 #         -fassociative-math -fno-signed-zeros -frename-registers -funroll-loops \
 #         -fomit-frame-pointer \
 #         -fallow-store-data-races  -fno-semantic-interposition -floop-parallelize-all -ftree-parallelize-loops=4"
-CFLAGS="-O2 -fno-semantic-interposition -floop-parallelize-all -ftree-parallelize-loops=4"
+CFLAGS="-O2 -fno-semantic-interposition -floop-parallelize-all -ftree-parallelize-loops=4 -g3 $CFLAGS"
 
 while test -n "$*"; do
     case $1 in
@@ -494,6 +495,7 @@ while test -n "$*"; do
         --with-all) add_all_features;;
         --without-*) delete_feature `echo $1 | sed -e 's,--without-,,'`;;
         --with-*) add_feature `echo $1 | sed -e 's,--with-,,'`;;
+        --enable-*|--disable-*) emacs_build_options="$emacs_build_options $1";;
         --nativecomp-aot) export NATIVE_FULL_AOT=1;;
         --slim) add_all_features
                 delete_feature cairo # We delete features here, so that user can repopulate them

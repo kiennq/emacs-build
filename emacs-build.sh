@@ -286,6 +286,15 @@ function action3_package_deps ()
     package_dependencies "$emacs_depsfile" "`emacs_dependencies`"
 }
 
+function write_source_info ()
+{
+    cd "$emacs_full_install_dir"
+    cat <<EOF > source_info.txt
+repo: $emacs_repo
+branch/commit: $emacs_branch
+EOF
+}
+
 function action4_package_emacs ()
 {
     # Package a prebuilt emacs with and without the required dependencies, ready
@@ -304,6 +313,7 @@ function action4_package_emacs ()
         echo Failed to compress distribution file $emacs_nodepsfile; echo
         return -1
     fi
+    write_source_info
     cd "$emacs_source_dir"
     if zip -x '.git/*' -9r "$emacs_srcfile" *; then
         echo Built source package $emacs_srcfile
@@ -339,6 +349,7 @@ function action5_package_all ()
 
         emacs_build_strip_exes "$emacs_full_install_dir"
         find . -type f | sort | list_filter -i "$packing_slim_exclusion" | xargs rm -f
+        write_source_info
 
         if test "$emacs_pkg_msix" = "yes"; then
             man_file=`cygpath -w "$emacs_build_root/template/appxmanifest.t.xml"`

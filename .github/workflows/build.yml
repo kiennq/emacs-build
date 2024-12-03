@@ -100,7 +100,9 @@ jobs:
       - name: Install deps
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        run: .github/scripts/install-libs.sh
+        run: |
+          [[ '${{ matrix.build_options }}' == *'--without-mps'* ]] || .github/scripts/install-libs.sh
+          ./emacs-build.sh --slim --ensure ${{ matrix.build_options }}
 
       - name: Install deps
         if: runner.os != 'Windows'
@@ -110,7 +112,7 @@ jobs:
         if: runner.os == 'Windows'
         # Require --with-* flags, else the deps will not be included properly
         run: |
-          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --build ${{ matrix.build_options }}
+          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --configure --build-dev ${{ matrix.build_options }}
 
       - name: Install winget
         if: runner.os == 'Windows'

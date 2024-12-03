@@ -381,7 +381,7 @@ native-compilation mingw-libgccjit
 png mingw-libpng
 rsvg mingw-librsvg
 tiff mingw-libtiff
-tree-sitter mingw-tree-sitter
+tree-sitter mingw-libtree-sitter
 xml2 mingw-libxml2
 xpm mingw-xpm-nox
 zlib mingw-zlib
@@ -563,7 +563,7 @@ if test -z "$emacs_branch"; then
 fi
 actions=`unique_list $actions`
 if test -z "$actions"; then
-    actions="action0_clone action1_ensure_packages action2.1_build action3_package_deps action5_package_all"
+    actions="action0_clone action1_ensure_packages action2.0_prep_build action2.1_build action3_package_deps action5_package_all"
 fi
 features=`unique_list $features`
 inactive_features=`unique_list $inactive_features`

@@ -31,15 +31,15 @@ echo emacs_build_flags=$emacs_build_flags
 
 cd $emacs_src_dir
 
-render_libs="librsvg2-dev libxpm-dev libjpeg-dev libpng-dev libgif-dev libgtk-3-dev libharfbuzz-dev"
-render_deps=",librsvg2-2,libxpm4,libjpeg9,libgif7,libpng16-16,libgtk-3-0,libharfbuzz0b"
+render_libs="libtiff-dev librsvg2-dev libxpm-dev libjpeg-dev libpng-dev libgif-dev libgtk-3-dev libharfbuzz-dev"
+render_deps="libtiff5,librsvg2-2,libxpm4,libjpeg9,libgif7,libpng16-16,libgtk-3-0,libharfbuzz0b"
 
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/ppa
 sudo apt update
 # libtree-sitter-dev is only supported from Jammy (22.04)
 sudo apt install -y dpkg-dev autoconf make texinfo $render_libs libgnutls28-dev \
-     libncurses5-dev libsystemd-dev libgccjit-11-dev gcc-11 libxt-dev \
-     libtree-sitter-dev libwebkit2gtk-4.0-dev curl
+     libncurses-dev libsystemd-dev libgccjit-11-dev gcc-11 libxt-dev \
+     libtree-sitter-dev curl
 export CC=/usr/bin/gcc-11 CXX=/usr/bin/gcc-11
 
 ./autogen.sh
@@ -80,7 +80,7 @@ Version: $emacs_pkg_version
 Architecture: $arch
 Maintainer: www.gnu.org/software/emacs/
 Description: GNU Emacs
-Depends: libncurses5,libgccjit0,libtree-sitter0,libwebkit2gtk-4.0-37${render_deps}
+Depends: libgccjit0,libtree-sitter0,${render_deps}
 EOF
 
 dpkg-deb --build -z9 --root-owner-group $deb_dir $emacs_dest_dir

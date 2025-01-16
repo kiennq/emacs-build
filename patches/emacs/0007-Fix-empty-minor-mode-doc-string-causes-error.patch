@@ -1,14 +1,14 @@
-From 656e14f82071770f30a6f73ef85cc5cf632a7a31 Mon Sep 17 00:00:00 2001
+From f95cfe8c3d2580023c1d8ef7f5febed9892f34f4 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Wed, 13 Sep 2023 19:19:41 +0900
-Subject: [PATCH 2/6] Fix empty minor-mode doc string causes error
+Subject: [PATCH 07/11] Fix empty minor-mode doc string causes error
 
 ---
  lisp/emacs-lisp/easy-mmode.el | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/lisp/emacs-lisp/easy-mmode.el b/lisp/emacs-lisp/easy-mmode.el
-index 944a74a91ee..f796e727ee8 100644
+index 2f63fc90f5..b54fd834fe 100644
 --- a/lisp/emacs-lisp/easy-mmode.el
 +++ b/lisp/emacs-lisp/easy-mmode.el
 @@ -105,7 +105,7 @@ easy-mmode--mode-docstring

@@ -1,35 +1,19 @@
-From 33712797f9b92f762f7bc57d00b6dc00c8fb8354 Mon Sep 17 00:00:00 2001
+From 8d5c7688743cb4ec990f948af9a900f11aee4e95 Mon Sep 17 00:00:00 2001
 From: Pip Cet <pipcet@protonmail.com>
 Date: Sun, 27 Oct 2024 18:27:46 -0700
-Subject: [PATCH] Windows: unaligned jmpbuf support
+Subject: [PATCH 06/11] Windows: unaligned jmpbuf support
 
 ---
- src/alloc.c |   9 ++-
+ src/alloc.c |   2 +-
  src/comp.c  | 165 +++++++++++++++++++++++++++++++++++++++++-----------
  src/lisp.h  |  29 +++++++++
- 3 files changed, 165 insertions(+), 38 deletions(-)
+ 3 files changed, 160 insertions(+), 36 deletions(-)
 
 diff --git a/src/alloc.c b/src/alloc.c
-index c9ff26f28..7388af1f5 100644
+index 9ace9fcbbc..06b889b7da 100644
 --- a/src/alloc.c
 +++ b/src/alloc.c
-@@ -722,10 +722,13 @@ #define COMMON_MULTIPLE(a, b) \
-    and that contain Lisp objects.  On typical hosts malloc already
-    aligns sufficiently, but extra work is needed on oddball hosts
-    where Emacs would crash if malloc returned a non-GCALIGNED pointer.  */
--enum { LISP_ALIGNMENT = alignof (union { union emacs_align_type x;
--					 GCALIGNED_UNION_MEMBER }) };
-+enum { LISP_ALIGNMENT = alignof (union { GCALIGNED_UNION_MEMBER }) };
- static_assert (LISP_ALIGNMENT % GCALIGNMENT == 0);
- 
-+#ifdef HAVE_MPS
-+static_assert (LISP_ALIGNMENT == GCALIGNMENT);
-+#endif
-+
- /* True if malloc (N) is known to return storage suitably aligned for
-    Lisp objects whenever N is a multiple of LISP_ALIGNMENT.  In
-    practice this is true whenever alignof (max_align_t) is also a
-@@ -3108,7 +3111,7 @@ DEFUN ("make-list", Fmake_list, Smake_list, 2, 2, 0,
+@@ -2941,7 +2941,7 @@ DEFUN ("make-list", Fmake_list, Smake_list, 2, 2, 0,
  			   Vector Allocation
   ***********************************************************************/
  /* Vector size requests are a multiple of this.  */
@@ -39,10 +23,10 @@ index c9ff26f28..7388af1f5 100644
  /* Round up X to nearest mult-of-ROUNDUP_SIZE --- use at compile time.  */
  #define vroundup_ct(x) ROUNDUP (x, roundup_size)
 diff --git a/src/comp.c b/src/comp.c
-index 6d5c68ef4..897dc605e 100644
+index f7f5f8e19b..a13909724b 100644
 --- a/src/comp.c
 +++ b/src/comp.c
-@@ -537,6 +537,25 @@ #define DECL_BLOCK(name, func)				\
+@@ -521,6 +521,25 @@ #define DECL_BLOCK(name, func)				\
  #endif
  #define SETJMP_NAME SETJMP
  
@@ -68,7 +52,7 @@ index 6d5c68ef4..897dc605e 100644
  /* Max number function importable by native compiled code.  */
  #define F_RELOC_MAX_SIZE 1600
  
-@@ -720,7 +739,12 @@ helper_sanitizer_assert (Lisp_Object, Lisp_Object);
+@@ -699,7 +718,12 @@ helper_sanitizer_assert (Lisp_Object, Lisp_Object);
  /* Note: helper_link_table must match the list created by
     `declare_runtime_imported_funcs'.  */
  static void *helper_link_table[] =
@@ -80,9 +64,9 @@ index 6d5c68ef4..897dc605e 100644
 +#endif
 +    wrong_type_argument,
      helper_PSEUDOVECTOR_TYPEP_XUNTAG,
-     pure_write_error,
      push_handler,
-@@ -2232,33 +2256,88 @@ emit_setjmp (gcc_jit_rvalue *buf)
+     record_unwind_protect_excursion,
+@@ -2177,33 +2201,88 @@ emit_setjmp (gcc_jit_rvalue *buf)
  
    return gcc_jit_context_new_call (comp.ctxt, NULL, f, 1, args);
  #else
@@ -194,7 +178,7 @@ index 6d5c68ef4..897dc605e 100644
  #endif
  }
  
-@@ -2970,6 +3049,15 @@ #define ADD_IMPORTED(f_name, ret_type, nargs, args)			       \
+@@ -2917,6 +2996,15 @@ #define ADD_IMPORTED(f_name, ret_type, nargs, args)			       \
  
    gcc_jit_type *args[4];
  
@@ -210,51 +194,51 @@ index 6d5c68ef4..897dc605e 100644
    ADD_IMPORTED (wrong_type_argument, comp.void_type, 2, NULL);
  
    args[0] = comp.lisp_obj_type;
-@@ -5261,21 +5349,28 @@ maybe_defer_native_compilation (Lisp_Object function_name,
+@@ -5135,21 +5223,28 @@ maybe_defer_native_compilation (Lisp_Object function_name,
        || !NILP (Fgethash (Vload_true_file_name, V_comp_no_native_file_h, Qnil)))
      return;
  
 -  Lisp_Object src =
--    concat2 (CALL1I (file-name-sans-extension, Vload_true_file_name),
--	     build_pure_c_string (".el"));
+-    concat2 (CALLNI (file-name-sans-extension, Vload_true_file_name),
+-	     build_string (".el"));
 -  if (NILP (Ffile_exists_p (src)))
 +  if (Ffboundp (intern_c_string ("file-name-sans-extension")))
      {
--      src = concat2 (src, build_pure_c_string (".gz"));
+-      src = concat2 (src, build_string (".gz"));
 +      Lisp_Object src =
-+	concat2 (CALL1I (file-name-sans-extension, Vload_true_file_name),
-+		 build_pure_c_string (".el"));
++        concat2 (CALLNI (file-name-sans-extension, Vload_true_file_name),
++                 build_string (".el"));
        if (NILP (Ffile_exists_p (src)))
 -	return;
 -    }
-+	{
-+	  src = concat2 (src, build_pure_c_string (".gz"));
-+	  if (NILP (Ffile_exists_p (src)))
-+	    return;
-+	}
-+      Fputhash (function_name, definition, Vcomp_deferred_pending_h);
++        {
++          src = concat2 (src, build_string (".gz"));
++          if (NILP (Ffile_exists_p (src)))
++            return;
++        }
  
 -  Fputhash (function_name, definition, Vcomp_deferred_pending_h);
++      Fputhash (function_name, definition, Vcomp_deferred_pending_h);
+ 
+-  pending_funcalls
+-    = Fcons (list (Qnative__compile_async, src, Qnil, Qlate),
+-             pending_funcalls);
 +      pending_funcalls
-+	= Fcons (list (Qnative__compile_async, src, Qnil, Qlate),
-+		 pending_funcalls);
++        = Fcons (list (Qnative__compile_async, src, Qnil, Qlate),
++                 pending_funcalls);
 +    }
 +  else
 +    {
 +      return;
 +    }
- 
--  pending_funcalls
--    = Fcons (list (Qnative__compile_async, src, Qnil, Qlate),
--             pending_funcalls);
  }
  
  
 diff --git a/src/lisp.h b/src/lisp.h
-index b9234651c..885735ee4 100644
+index 921215aa0a..447d1c0df6 100644
 --- a/src/lisp.h
 +++ b/src/lisp.h
-@@ -2379,9 +2379,38 @@ CHAR_TABLE_EXTRA_SLOTS (struct Lisp_Char_Table *ct)
+@@ -2346,9 +2346,38 @@ CHAR_TABLE_EXTRA_SLOTS (struct Lisp_Char_Table *ct)
  #else
  /* A platform that uses neither _longjmp nor siglongjmp; assume
     longjmp does not affect the sigmask.  */
@@ -294,5 +278,5 @@ index b9234651c..885735ee4 100644
  
  #include "thread.h"
 -- 
-2.47.0.vfs.0.3
+2.46.0.windows.1
 

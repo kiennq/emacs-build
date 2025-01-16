@@ -1,17 +1,17 @@
-From 972842fe53fe8891a6f08ed3ea9f1a4bc3e16cb0 Mon Sep 17 00:00:00 2001
+From 0db65f4339ba49eda6e406e19c7ec0e1689f1965 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Sat, 31 Aug 2024 21:20:58 -0700
-Subject: [PATCH] w32 emacs-abort: remove kbdhook on abort
+Subject: [PATCH 08/11] w32 emacs-abort: remove kbdhook on abort
 
 ---
  src/w32fns.c | 8 ++++++++
  1 file changed, 8 insertions(+)
 
 diff --git a/src/w32fns.c b/src/w32fns.c
-index 2080babde..9a5ce5acd 100644
+index 89a4d46240..47bb540649 100644
 --- a/src/w32fns.c
 +++ b/src/w32fns.c
-@@ -2883,6 +2883,10 @@ setup_w32_kbdhook (HWND hwnd)
+@@ -3124,6 +3124,10 @@ setup_w32_kbdhook (HWND hwnd)
  void
  remove_w32_kbdhook (void)
  {
@@ -22,7 +22,7 @@ index 2080babde..9a5ce5acd 100644
    kbdhook.hook_count--;
    if (kbdhook.hook_count == 0 && w32_kbdhook_active)
      {
-@@ -11344,6 +11348,10 @@ emacs_abort (void)
+@@ -11577,6 +11581,10 @@ emacs_abort (void)
    if (w32_disable_abort_dialog)
      abort ();
  
@@ -34,5 +34,5 @@ index 2080babde..9a5ce5acd 100644
  
    if (noninteractive)
 -- 
-2.46.0.vfs.0.0
+2.46.0.windows.1
 

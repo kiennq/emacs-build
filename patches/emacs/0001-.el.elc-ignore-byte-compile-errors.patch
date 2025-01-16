@@ -1,7 +1,7 @@
-From 295b48f4acc96bfb9a8094542c1e6627c542925a Mon Sep 17 00:00:00 2001
+From a8dd8c8ae724a7e550af1808afa398d2f51ce022 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Thu, 14 Sep 2023 23:19:25 +0900
-Subject: [PATCH 1/6] .el.elc: ignore byte compile errors
+Subject: [PATCH 01/11] .el.elc: ignore byte compile errors
 
 ---
  Makefile.in      | 2 +-
@@ -9,7 +9,7 @@ Subject: [PATCH 1/6] .el.elc: ignore byte compile errors
  2 files changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/Makefile.in b/Makefile.in
-index ade7d258a4c..473bc6ed7d8 100644
+index 342bec11d8..36178ad821 100644
 --- a/Makefile.in
 +++ b/Makefile.in
 @@ -760,7 +760,7 @@ install-arch-indep:
@@ -22,7 +22,7 @@ index ade7d258a4c..473bc6ed7d8 100644
  	  done; \
  	  ${GZIP_PROG} -9n "../etc/publicsuffix.txt"; \
 diff --git a/lisp/Makefile.in b/lisp/Makefile.in
-index 95cb6a97213..2434f8d66ab 100644
+index 1718235773..999ae7402d 100644
 --- a/lisp/Makefile.in
 +++ b/lisp/Makefile.in
 @@ -322,17 +322,17 @@ .SUFFIXES:

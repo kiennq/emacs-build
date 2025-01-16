@@ -1,14 +1,14 @@
-From 9653daa6d5271ff9b81343b843625d1ce7f0b3ab Mon Sep 17 00:00:00 2001
+From b63db76cb9cf1a79c28ac6047bd38b7daefa4e8a Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Fri, 5 Jul 2024 02:39:23 -0700
-Subject: [PATCH 5/6] clang fixes
+Subject: [PATCH 10/11] clang fixes
 
 ---
  nt/mingw-cfg.site | 4 ++++
  1 file changed, 4 insertions(+)
 
 diff --git a/nt/mingw-cfg.site b/nt/mingw-cfg.site
-index 9962cc46642..197c186a3e3 100644
+index 16b61de3bd..9dc8132f08 100644
 --- a/nt/mingw-cfg.site
 +++ b/nt/mingw-cfg.site
 @@ -29,6 +29,10 @@

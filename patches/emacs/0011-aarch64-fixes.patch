@@ -1,22 +1,22 @@
-From ff31e0fceea45cdf201aa0f0b7f6974463133a5f Mon Sep 17 00:00:00 2001
+From 5e12843fa32150d2f18ce21fc6f3ae58732df6a7 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Fri, 5 Jul 2024 02:50:31 -0700
-Subject: [PATCH 6/6] aarch64 fixes
+Subject: [PATCH 11/11] aarch64 fixes
 
 ---
- configure.ac            |  8 +++++---
+ configure.ac            |  6 ++++--
  nt/emacs-ARM64.manifest | 40 ++++++++++++++++++++++++++++++++++++++++
  nt/emacs.rc.in          |  4 +++-
  nt/inc/ms-w32.h         |  2 +-
  src/w32fns.c            |  8 ++++++++
- 5 files changed, 57 insertions(+), 5 deletions(-)
+ 5 files changed, 56 insertions(+), 4 deletions(-)
  create mode 100644 nt/emacs-ARM64.manifest
 
 diff --git a/configure.ac b/configure.ac
-index 67da852667d..18948e127d5 100644
+index f720885c9b..9ad849443a 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -1525,7 +1525,7 @@ AC_DEFUN
+@@ -1526,7 +1526,7 @@ AC_DEFUN
    ;;
  
    # MinGW64
@@ -25,7 +25,7 @@ index 67da852667d..18948e127d5 100644
      case "${canonical}" in
        *-mingw* )
  		opsys=mingw32
-@@ -2389,6 +2389,7 @@ AC_DEFUN
+@@ -2250,6 +2250,7 @@ AC_DEFUN
  if test "$opsys" = "mingw32"; then
    case "$canonical" in
      x86_64-*-mingw*) C_SWITCH_SYSTEM="-mtune=generic" ;;
@@ -33,7 +33,7 @@ index 67da852667d..18948e127d5 100644
      *) C_SWITCH_SYSTEM="-mtune=pentium4" ;;
    esac
  fi
-@@ -3163,6 +3164,7 @@ AC_DEFUN
+@@ -3023,6 +3024,7 @@ AC_DEFUN
    EMACSRES="emacs.res"
    case "$canonical" in
      x86_64-*-*) EMACS_MANIFEST="emacs-x64.manifest" ;;
@@ -41,7 +41,7 @@ index 67da852667d..18948e127d5 100644
      *) EMACS_MANIFEST="emacs-x86.manifest" ;;
    esac
    dnl Construct something of the form "24,4,0,0" with 4 components.
-@@ -7551,13 +7553,13 @@ AC_DEFUN
+@@ -7422,7 +7424,7 @@ AC_DEFUN
     ## If the values of -image-base are modified, the corresponding
     ## values of DEFAULT_IMAGE_BASE in w32fns.c should be kept in sync.
     case "$canonical" in
@@ -49,17 +49,10 @@ index 67da852667d..18948e127d5 100644
 +     x86_64-*-* | aarch64-*-*) LD_SWITCH_SYSTEM_TEMACS="-Wl,-stack,0x00800000 -Wl,-heap,0x00100000 -Wl,-image-base,0x400000000 -Wl,-entry,__start -Wl,-Map,./temacs.map" ;;
       *) LD_SWITCH_SYSTEM_TEMACS="-Wl,-stack,0x00800000 -Wl,-heap,0x00100000 -Wl,-image-base,0x01000000 -Wl,-entry,__start -Wl,-Map,./temacs.map" ;;
     esac
-    ## If they want unexec, disable Windows ASLR for the Emacs binary
-    if test "$with_dumping" = "unexec"; then
-       case "$canonical" in
--        x86_64-*-*) LD_SWITCH_SYSTEM_TEMACS="$LD_SWITCH_SYSTEM_TEMACS -Wl,-disable-dynamicbase -Wl,-disable-high-entropy-va -Wl,-default-image-base-low" ;;
-+        x86_64-*-* | aarch64-*-*) LD_SWITCH_SYSTEM_TEMACS="$LD_SWITCH_SYSTEM_TEMACS -Wl,-disable-dynamicbase -Wl,-disable-high-entropy-va -Wl,-default-image-base-low" ;;
-         *) LD_SWITCH_SYSTEM_TEMACS="$LD_SWITCH_SYSTEM_TEMACS -Wl,-disable-dynamicbase" ;;
-       esac
-    fi
+    ;;
 diff --git a/nt/emacs-ARM64.manifest b/nt/emacs-ARM64.manifest
 new file mode 100644
-index 00000000000..bb5e2d37506
+index 0000000000..bb5e2d3750
 --- /dev/null
 +++ b/nt/emacs-ARM64.manifest
 @@ -0,0 +1,40 @@
@@ -104,7 +97,7 @@ index 00000000000..bb5e2d37506
 +  </asmv3:application>
 +</assembly>
 diff --git a/nt/emacs.rc.in b/nt/emacs.rc.in
-index ed217887c5d..62de3f362b4 100644
+index 9ed948bfa3..ce8a0ae7ba 100644
 --- a/nt/emacs.rc.in
 +++ b/nt/emacs.rc.in
 @@ -1,6 +1,8 @@
@@ -118,7 +111,7 @@ index ed217887c5d..62de3f362b4 100644
  #else
  1 24 "emacs-x86.manifest"
 diff --git a/nt/inc/ms-w32.h b/nt/inc/ms-w32.h
-index 7212e4d2984..d5b7b021527 100644
+index 0627c4bcad..bb9e530451 100644
 --- a/nt/inc/ms-w32.h
 +++ b/nt/inc/ms-w32.h
 @@ -217,7 +217,7 @@ #define MAX_UTF8_PATH   (MAXPATHLEN * 4)
@@ -131,10 +124,10 @@ index 7212e4d2984..d5b7b021527 100644
     handler, see https://sourceforge.net/p/mingw-w64/mailman/message/32421953/.
     This seems to be an unsolved problem in the MinGW64 runtime.  So we
 diff --git a/src/w32fns.c b/src/w32fns.c
-index bd65aa48a14..2080babde4e 100644
+index 47bb540649..cdbac14cfa 100644
 --- a/src/w32fns.c
 +++ b/src/w32fns.c
-@@ -11254,8 +11254,12 @@ stack_overflow_handler (void)
+@@ -11499,8 +11499,12 @@ stack_overflow_handler (void)
    if (gc_in_progress)
      terminate_due_to_signal (SIGSEGV, 40);
  #ifdef _WIN64
@@ -147,7 +140,7 @@ index bd65aa48a14..2080babde4e 100644
  #else
    sys_longjmp (return_to_command_loop, 1);
  #endif
-@@ -11282,7 +11286,11 @@ my_exception_handler (EXCEPTION_POINTERS * exception_data)
+@@ -11527,7 +11531,11 @@ my_exception_handler (EXCEPTION_POINTERS * exception_data)
      {
        /* Call stack_overflow_handler ().  */
  #ifdef _WIN64

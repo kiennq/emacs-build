@@ -1,7 +1,7 @@
-From a341ffe717063434e8acfcfe1f8af70e25426c0c Mon Sep 17 00:00:00 2001
+From f26d6a979c85df4c61891a06601509ae485c450f Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Tue, 6 Aug 2024 12:38:45 -0700
-Subject: [PATCH 1/7] ci: auto-sync
+Subject: [PATCH 02/11] ci: auto-sync
 
 ---
  .github/workflows/sync.yml | 32 ++++++++++++++++++++++++++++++++
@@ -11,7 +11,7 @@ Subject: [PATCH 1/7] ci: auto-sync
 
 diff --git a/.github/workflows/sync.yml b/.github/workflows/sync.yml
 new file mode 100644
-index 00000000000..9396c47d531
+index 0000000000..cbaf5f7af6
 --- /dev/null
 +++ b/.github/workflows/sync.yml
 @@ -0,0 +1,32 @@
@@ -31,7 +31,7 @@ index 00000000000..9396c47d531
 +    runs-on: ubuntu-latest
 +    env:
 +      upstream_repo: emacs-mirror/emacs
-+      upstream_branch: master scratch/igc scratch/tty-child-frames
++      upstream_branch: master feature/igc scratch/tty-child-frames
 +    steps:
 +      - name: Clone
 +        run: |
@@ -48,7 +48,7 @@ index 00000000000..9396c47d531
 +          echo $upstream_branch | xargs -n1 | xargs -I{} git merge --no-edit upstream/{}
 +          git push origin -f
 diff --git a/.gitignore b/.gitignore
-index c1f31514d06..ca97c294483 100644
+index a1a967bce3..c9933028f3 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -27,6 +27,7 @@

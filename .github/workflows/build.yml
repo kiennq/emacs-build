@@ -48,15 +48,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2022
+          - os: windows-latest
             shell: powershell
-            msystem: UCRT64
+            msystem: MINGW64
             build_options: --with-rsvg --without-mps
-          - os: windows-2022
+          - os: windows-latest
             shell: powershell
             msystem: UCRT64
             build_options: --variant mps --with-rsvg --with-mps --no-strip --enable-build-details
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             shell: bash
             build_options: --with-rsvg --with-mps --without-xwidgets
 

@@ -31,7 +31,7 @@ index 00000000000..9396c47d531
 +    runs-on: ubuntu-latest
 +    env:
 +      upstream_repo: emacs-mirror/emacs
-+      upstream_branch: master
++      upstream_branch: master feature/igc
 +    steps:
 +      - name: Clone
 +        run: |
@@ -51,11 +51,10 @@ diff --git a/.gitignore b/.gitignore
 index c1f31514d06..ca97c294483 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -27,6 +27,7 @@
+@@ -27,6 +27,6 @@
  !.gitignore
  !.gitlab-ci.yml
  !.mailmap
-+!.github/
  
  # Built by 'autogen.sh'.
  /aclocal.m4

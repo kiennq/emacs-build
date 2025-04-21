@@ -1,7 +1,7 @@
 From c66667bad9b3b044d929a50362f571050aed1bfa Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Sat, 24 Aug 2024 12:51:02 -0700
-Subject: [PATCH 4/6] Fix register scanning on FreeBSD and Linux
+Subject: [PATCH 4/7] Fix register scanning on FreeBSD and Linux
 
 Author: Richard Brooksby <rb@ravenbrook.com>
 Date:   Mon Jan 16 23:21:04 2023 +0000
@@ -59,7 +59,7 @@ index f05ff67..32b0830 100644
  
  /* STACK_CONTEXT_SAVE -- save the callee-saves and stack pointer */
  
-+#if (defined(MPS_BUILD_GC) || defined(MPS_BUILD_LL)) && (defined(MPS_OS_LI) || defined(MPS_OS_FR)) && defined(MPS_ARCH_I3)
++#if (defined(MPS_BUILD_GC) || defined(MPS_BUILD_LL)) && defined(MPS_ARCH_I3)
 +
 +struct StackContextStruct {
 +  Word calleeSave[4];
@@ -74,7 +74,7 @@ index f05ff67..32b0830 100644
 +    __asm__ volatile ("mov %%ebp, %0" : "=m" (_save[3]));       \
 +  END
 +
-+#elif (defined(MPS_BUILD_GC) || defined(MPS_BUILD_LL)) && (defined(MPS_OS_LI) || defined(MPS_OS_FR)) && defined(MPS_ARCH_I6)
++#elif (defined(MPS_BUILD_GC) || defined(MPS_BUILD_LL)) && defined(MPS_ARCH_I6)
 +
 +struct StackContextStruct {
 +  Word calleeSave[6];

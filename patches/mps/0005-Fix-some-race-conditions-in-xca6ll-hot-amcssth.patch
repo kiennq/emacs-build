@@ -1,7 +1,7 @@
 From 36398538134e88b979a61b6bacb94ad85f9d9bea Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Sat, 24 Aug 2024 12:54:11 -0700
-Subject: [PATCH 5/6] Fix some race conditions in xca6ll/hot/amcssth
+Subject: [PATCH 5/7] Fix some race conditions in xca6ll/hot/amcssth
 
 commit 14adaee7ba1b460606eb5a225daf62a779eacdda
 Merge: e089937 081d79e

@@ -1,0 +1,176 @@
+From e0b74cee844f45c51f3ad7b1904e9e662556731b Mon Sep 17 00:00:00 2001
+From: Pip Cet <pipcet@protonmail.com>
+Subject: [PATCH 1/3] Ensure sys_jmp_buf structures are marked during GC
+
+It's possible for a GC-relevant reference to be stored in a
+callee-saved register only, and for setjmp to have moved this
+reference into a sys_jmp_buf structure.  The safe thing to do is to
+mark all potential pointers in sys_jmp_buf.
+
+* src/thread.c (mark_one_thread): Mark thread->m_getcjmp and
+handler->jmp ambiguously.
+---
+ src/thread.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/thread.c b/src/thread.c
+index 6f28891078f..f306a08075c 100644
+--- a/src/thread.c
++++ b/src/thread.c
+@@ -665,12 +665,15 @@ mark_one_thread (struct thread_state *thread)
+   mark_specpdl (thread->m_specpdl, thread->m_specpdl_ptr);
+ 
+   mark_c_stack (thread->m_stack_bottom, stack_top);
++  mark_memory (&thread->m_getcjmp,
++              &thread->m_getcjmp + 1);
+ 
+   for (struct handler *handler = thread->m_handlerlist;
+        handler; handler = handler->next)
+     {
+       mark_object (handler->tag_or_ch);
+       mark_object (handler->val);
++      mark_memory (&handler->jmp, &handler->jmp + 1);
+     }
+ 
+   if (thread->m_current_buffer)
+-- 
+2.48.1
+
+From 34c3671b7c58b5cdb08cdfb65a61c9e4c840b57e Mon Sep 17 00:00:00 2001
+From: Pip Cet <pipcet@protonmail.com>
+Subject: [PATCH 2/3] [MPS] Scan thread->m_getcjmp ambigously
+
+This makes it necessary to allocate the buffer indirectly, as it needs
+to be an MPS root rather than part of a normal pseudovector.
+
+* src/thread.c (main_thread_getcjmp): New variable.
+(main_thread): Use it.
+(run_thread): Free setjmp buffer when tearing down a thread.
+(Fmake_thread): Allocate setjmp buffer when starting a new thread.
+* src/thread.h (m_getcjmp): Point to sys_jmp_buf indirectly.
+---
+ src/thread.c | 14 ++++++++++++++
+ src/thread.h |  7 +++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/src/thread.c b/src/thread.c
+index f306a08075c..9d6e696ec9a 100644
+--- a/src/thread.c
++++ b/src/thread.c
+@@ -39,6 +39,10 @@ Copyright (C) 2012-2025 Free Software Foundation, Inc.
+ #define release_select_lock() do { } while (0)
+ #endif
+ 
++#ifdef HAVE_MPS
++static sys_jmp_buf main_thread_getcjmp;
++#endif
++
+ union aligned_thread_state main_thread
+   = {{
+       .header.size = PVECHEADERSIZE (PVEC_THREAD,
+@@ -47,6 +51,9 @@ #define release_select_lock() do { } while (0)
+ 				     VECSIZE (struct thread_state)),
+       .m_last_thing_searched = LISPSYM_INITIALLY (Qnil),
+       .m_saved_last_thing_searched = LISPSYM_INITIALLY (Qnil),
++#ifdef HAVE_MPS
++      .m_getcjmp = &main_thread_getcjmp,
++#endif
+       .name = LISPSYM_INITIALLY (Qnil),
+       .function = LISPSYM_INITIALLY (Qnil),
+       .result = LISPSYM_INITIALLY (Qnil),
+@@ -826,6 +833,10 @@ run_thread (void *state)
+   self->m_specpdl = NULL;
+   self->m_specpdl_ptr = NULL;
+   self->m_specpdl_end = NULL;
++#ifdef HAVE_MPS
++  igc_xfree (self->m_getcjmp);
++  self->m_getcjmp = NULL;
++#endif
+ 
+ #ifndef HAVE_MPS
+    for (struct handler *c = handlerlist_sentinel, *c_next; c; c = c_next)
+@@ -906,6 +917,9 @@ DEFUN ("make-thread", Fmake_thread, Smake_thread, 1, 2, 0,
+ 				    PVEC_THREAD);
+   new_thread->function = function;
+   new_thread->name = name;
++#ifdef HAVE_MPS
++  new_thread->m_getcjmp = igc_xzalloc_ambig (sizeof (*new_thread->m_getcjmp));
++#endif
+   /* Perhaps copy m_last_thing_searched from parent?  */
+   new_thread->m_current_buffer = current_thread->m_current_buffer;
+ 
+diff --git a/src/thread.h b/src/thread.h
+index 51cef089e88..921ebbe1b0d 100644
+--- a/src/thread.h
++++ b/src/thread.h
+@@ -186,8 +186,15 @@ #define waiting_for_input (current_thread->m_waiting_for_input)
+      so that if more than one thread calls read_char, they don't
+      clobber each other's getcjmp, which will cause
+      quit_throw_to_read_char crash due to using a wrong stack.  */
++#ifdef HAVE_MPS
++  /* For MPS, we need to use an indirect setjmp buffer so we can mark it
++     conservatively.  */
++  sys_jmp_buf *m_getcjmp;
++#define getcjmp (*(current_thread->m_getcjmp))
++#else
+   sys_jmp_buf m_getcjmp;
+ #define getcjmp (current_thread->m_getcjmp)
++#endif
+ 
+   /* The OS identifier for this thread.  */
+   sys_thread_t thread_id;
+-- 
+2.48.1
+
+From 4a6beb0ac6f352c9d14d2331652039dc477a02ae Mon Sep 17 00:00:00 2001
+From: Pip Cet <pipcet@protonmail.com>
+Subject: [PATCH 3/3] [MPS] Allocate handlers using igc_xzalloc_ambig
+
+Handlers contain a sys_jmp_buf, which requires ambiguous scanning; on
+Windows 64, sys_jmp_buf also requires 16-byte alignment, which IGC
+does not provide on that platform.
+
+* src/igc.c (igc_alloc_handler): Use 'igc_xzalloc_ambig', not 'alloc'.
+* src/thread.c (run_thread): Free handlers.
+---
+ src/igc.c    | 2 +-
+ src/thread.c | 6 ++++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/igc.c b/src/igc.c
+index b3414c4fd06..32288d4b661 100644
+--- a/src/igc.c
++++ b/src/igc.c
+@@ -4519,7 +4519,7 @@ igc_alloc_blv (void)
+ void *
+ igc_alloc_handler (void)
+ {
+-  struct handler *h = alloc (sizeof *h, IGC_OBJ_HANDLER);
++  struct handler *h = igc_xzalloc_ambig (sizeof *h);
+   return h;
+ }
+ 
+diff --git a/src/thread.c b/src/thread.c
+index 9d6e696ec9a..3aa530bcbab 100644
+--- a/src/thread.c
++++ b/src/thread.c
+@@ -838,13 +838,15 @@ run_thread (void *state)
+   self->m_getcjmp = NULL;
+ #endif
+ 
+-#ifndef HAVE_MPS
+    for (struct handler *c = handlerlist_sentinel, *c_next; c; c = c_next)
+      {
+        c_next = c->nextfree;
++#ifndef HAVE_MPS
+        xfree (c);
+-     }
++#else
++       igc_xfree (c);
+ #endif
++     }
+ 
+   xfree (self->thread_name);
+ 
+-- 
+2.48.1

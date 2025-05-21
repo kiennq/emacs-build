@@ -99,10 +99,9 @@ jobs:
 
       - name: Install deps
         if: runner.os == 'Windows'
-        shell: msys2 {0}
         run: |
-          [[ '${{ matrix.build_options }}' == *'--without-mps'* ]] || .github/scripts/install-libs.sh
-          ./emacs-build.sh --slim --ensure ${{ matrix.build_options }}
+          .\emacs-build.cmd --slim --ensure ${{ matrix.build_options }}
+          if ("${{ matrix.build_options }}" -notmatch "--without-mps") { .github/scripts/install-libs.cmd }
 
       - name: Install deps
         if: runner.os != 'Windows'

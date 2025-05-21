@@ -1,4 +1,6 @@
 #!/bin/bash
+cd "$(dirname "$0")/../.."
+
 mkdir -p ./git/mps
 cd ./git/mps
 git clone https://github.com/Ravenbrook/mps --branch release-1.118.0 --depth=1 .

@@ -223,20 +223,17 @@ function action2.1_build ()
     echo Start building
     rm -f "$emacs_install_dir/bin/emacs.exe"
 
-    # See https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-emacs/PKGBUILD
-    # _sanity_check=$([[ "${MSYSTEM}" != MINGW* ]] || echo yes)
-    _sanity_check=$(echo yes)
-
     echo Building Emacs in directory $emacs_build_dir
-    if [[ "$_sanity_check" == "yes" ]]; then
-        make -j $emacs_build_threads -C $emacs_build_dir && return 0
-        # make -j $emacs_build_threads -C $emacs_build_dir && return 0
-    else
-        make -j $emacs_build_threads -C $emacs_build_dir actual-all && return 0
-    fi
+
+    make -j $emacs_build_threads -C $emacs_build_dir && return 0
+
+    echo "Regular build failed, retrying with bootstrap..."
+    make bootstrap -C $emacs_build_dir \
+        && make -j $emacs_build_threads -C $emacs_build_dir \
+        && return 0
 
     echo Build process failed
-    return -1
+    return 1
 }
 
 function action2.2_install ()

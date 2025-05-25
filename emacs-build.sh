@@ -151,9 +151,9 @@ function emacs_configure_build_dir ()
         options="$options --with-compress-install"
     fi
 
-    if test "$emacs_slim_build" = "yes"; then
-        options="$options --with-small-ja-dic"
-    fi
+    # if test "$emacs_slim_build" = "yes"; then
+    #     options="$options --with-small-ja-dic"
+    # fi
 
     # for f in $all_features; do
     #     if echo $features | grep $f > /dev/null; then
@@ -223,20 +223,12 @@ function action2.1_build ()
     echo Start building
     rm -f "$emacs_install_dir/bin/emacs.exe"
 
-    # See https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-emacs/PKGBUILD
-    # _sanity_check=$([[ "${MSYSTEM}" != MINGW* ]] || echo yes)
-    _sanity_check=$(echo yes)
-
     echo Building Emacs in directory $emacs_build_dir
-    if [[ "$_sanity_check" == "yes" ]]; then
-        make -j $emacs_build_threads -C $emacs_build_dir && return 0
-        # make -j $emacs_build_threads -C $emacs_build_dir && return 0
-    else
-        make -j $emacs_build_threads -C $emacs_build_dir actual-all && return 0
-    fi
+
+    make -j $emacs_build_threads -C $emacs_build_dir && return 0
 
     echo Build process failed
-    return -1
+    return 1
 }
 
 function action2.2_install ()
@@ -475,7 +467,7 @@ emacs_compress_files=no
 emacs_build_version=0.4
 emacs_slim_build=no
 emacs_build_threads=$((`nproc`*2))
-emacs_build_options="--disable-build-details --without-dbus --enable-link-time-optimization"
+emacs_build_options="--disable-build-details --without-dbus"
 emacs_apply_patches=yes
 emacs_pkg_msix=no
 # This is needed for pacman to return the right text
@@ -494,7 +486,7 @@ emacs_pkg_var=""
 #         -fassociative-math -fno-signed-zeros -frename-registers -funroll-loops \
 #         -fomit-frame-pointer \
 #         -fallow-store-data-races  -fno-semantic-interposition -floop-parallelize-all -ftree-parallelize-loops=4"
-CFLAGS="-O2 -fno-semantic-interposition -floop-parallelize-all -ftree-parallelize-loops=4 -g3 $CFLAGS"
+CFLAGS="-O2 -fallow-store-data-races -fno-semantic-interposition  -floop-parallelize-all -ftree-parallelize-loops=4 $CFLAGS"
 
 while test -n "$*"; do
     case $1 in
@@ -508,9 +500,7 @@ while test -n "$*"; do
         --enable-*|--disable-*) emacs_build_options="$emacs_build_options $1";;
         --nativecomp-aot) export NATIVE_FULL_AOT=1;;
         --slim) add_all_features
-                delete_feature cairo # We delete features here, so that user can repopulate them
-                delete_feature rsvg
-                delete_feature tiff
+                # delete_feature cairo # We delete features here, so that user can repopulate them
                 emacs_slim_build=yes
                 emacs_compress_files=yes
                 emacs_strip_executables=yes;;

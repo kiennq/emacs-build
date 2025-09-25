@@ -101,11 +101,11 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           .\emacs-build.cmd --slim --ensure ${{ matrix.build_options }}
-          if ("${{ matrix.build_options }}" -notmatch "--without-mps") { .github/scripts/install-libs.cmd }
+        # if ("${{ matrix.build_options }}" -notmatch "--without-mps") { .github/scripts/install-libs.cmd }
 
-      - name: Install deps
-        if: runner.os != 'Windows'
-        run: sudo .github/scripts/install-libs.sh
+      # - name: Install deps
+      #   if: runner.os != 'Windows'
+      #   run: sudo .github/scripts/install-libs.sh
 
       - name: Build Emacs
         if: runner.os == 'Windows'

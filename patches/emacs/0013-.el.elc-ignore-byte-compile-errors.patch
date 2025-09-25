@@ -1,0 +1,26 @@
+From de20823f6b49f2e4dac8bdb7e02bd381a01d9612 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 25 Sep 2025 06:58:44 -0700
+Subject: [PATCH] build: dont use included mps as it crashes ucrt64
+
+---
+ configure.ac | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/configure.ac b/configure.ac
+index 806feb238..aef75aa45 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -5567,7 +5567,8 @@ if test "${with_mps}" != "no"; then
+   # https://github.com/Ravenbrook/mps/pull/38
+   MPS_CFLAGS="-fno-omit-frame-pointer"
+ 
+-  AC_CONFIG_SUBDIRS([mps])
++  dnl Using external mps for now as included mps causes crashes in ucrt64
++  dnl AC_CONFIG_SUBDIRS([mps])
+ fi
+ 
+ # FIXME: update for in-tree MPS
+-- 
+2.51.0.windows.1
+

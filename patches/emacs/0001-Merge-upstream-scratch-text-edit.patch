@@ -1,0 +1,4036 @@
+From 60ec5a115300108231732e14a373e4877338587b Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Wed, 3 Dec 2025 02:07:43 -0800
+Subject: [PATCH] Merge upstream/scratch/text-edit
+
+---
+ .clang-format                |   2 +
+ src/Makefile.in              |   3 +-
+ src/alloc.c                  |  57 ++-
+ src/buffer.c                 | 125 ++----
+ src/buffer.h                 | 130 +-----
+ src/callint.c                |   4 +-
+ src/coding.c                 |  38 +-
+ src/composite.c              |   4 +-
+ src/dispextern.h             |   2 +-
+ src/editfns.c                |  52 +--
+ src/emacs.c                  |   2 +
+ src/fns.c                    |  14 +-
+ src/igc.c                    | 145 +------
+ src/igc.h                    |   4 +-
+ src/indent.c                 |   7 +-
+ src/insdel.c                 | 140 +------
+ src/lisp.h                   |  38 +-
+ src/lread.c                  |  11 +-
+ src/marker-vector.c          | 378 +++++++++++++++++
+ src/marker-vector.h          | 106 +++++
+ src/marker.c                 | 482 ++--------------------
+ src/pdumper.c                |  15 +-
+ src/print.c                  |   2 +-
+ src/process.c                |   9 +-
+ src/text-index.c             | 760 +++++++++++++++++++++++++++++++++++
+ src/text-index.h             |  33 ++
+ src/textconv.c               |  14 +-
+ src/undo.c                   |   5 +-
+ src/window.c                 |  58 ++-
+ src/xdisp.c                  |  38 +-
+ test/src/text-index-tests.el |  95 +++++
+ 31 files changed, 1644 insertions(+), 1129 deletions(-)
+ create mode 100644 src/marker-vector.c
+ create mode 100644 src/marker-vector.h
+ create mode 100644 src/text-index.c
+ create mode 100644 src/text-index.h
+ create mode 100644 test/src/text-index-tests.el
+
+diff --git a/.clang-format b/.clang-format
+index 7929a7435f2..8fea915960f 100644
+--- a/.clang-format
++++ b/.clang-format
+@@ -9,6 +9,8 @@ ContinuationIndentWidth: 2
+ IndentPPDirectives: AfterHash
+ PPIndentWidth: 1
+ ForEachMacros:
++  - FOR_EACH_MARKER
++  - FOR_EACH_MARKER_OF_VECTOR
+   - FOR_EACH_TAIL
+   - FOR_EACH_TAIL_SAFE
+   - FOR_EACH_LIVE_BUFFER
+diff --git a/src/Makefile.in b/src/Makefile.in
+index 8101d4406da..79540a826bd 100644
+--- a/src/Makefile.in
++++ b/src/Makefile.in
+@@ -455,7 +455,7 @@ base_obj =
+ 	charset.o coding.o category.o ccl.o character.o chartab.o bidi.o       \
+ 	$(CM_OBJ) term.o terminal.o xfaces.o $(XOBJ) $(GTK_OBJ) $(DBUS_OBJ)    \
+ 	emacs.o keyboard.o macros.o keymap.o sysdep.o 			       \
+-	bignum.o buffer.o filelock.o insdel.o marker.o 			       \
++	bignum.o buffer.o text-index.o filelock.o insdel.o marker.o	       \
+ 	minibuf.o fileio.o dired.o 					       \
+ 	cmds.o casetab.o casefiddle.o indent.o search.o regex-emacs.o undo.o   \
+ 	alloc.o pdumper.o data.o doc.o editfns.o callint.o 		       \
+@@ -468,6 +468,7 @@ base_obj =
+ 	profiler.o decompress.o $(IGCOBJ) 				       \
+ 	thread.o systhread.o sqlite.o  treesit.o			       \
+ 	itree.o json.o gc-handles.o					       \
++	marker-vector.o 							       \
+ 	$(MSDOS_OBJ) $(MSDOS_X_OBJ) $(NS_OBJ) $(CYGWIN_OBJ) $(FONT_OBJ)        \
+ 	$(W32_OBJ) $(WINDOW_SYSTEM_OBJ) $(XGSELOBJ)			       \
+ 	$(HAIKU_OBJ) $(PGTK_OBJ) $(ANDROID_OBJ)
+diff --git a/src/alloc.c b/src/alloc.c
+index 1be800f71e5..4b73f348d1e 100644
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -3943,11 +3943,7 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
+   struct Lisp_Marker *p = ALLOCATE_PLAIN_PSEUDOVECTOR (struct Lisp_Marker,
+ 						       PVEC_MARKER);
+   p->buffer = 0;
+-  p->bytepos = 0;
+-  p->charpos = 0;
+-#ifndef HAVE_MPS
+-  p->next = NULL;
+-#endif
++  p->entry = 0;
+   p->insertion_type = 0;
+   p->need_adjustment = 0;
+   return make_lisp_ptr (p, Lisp_Vectorlike);
+@@ -3957,27 +3953,18 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
+    at character position CHARPOS and byte position BYTEPOS.  */
+ 
+ Lisp_Object
+-build_marker (struct buffer *buf, ptrdiff_t charpos, ptrdiff_t bytepos)
++build_marker (struct buffer *buf, ptrdiff_t charpos)
+ {
+   /* No dead buffers here.  */
+   eassert (BUFFER_LIVE_P (buf));
+ 
+-  /* Every character is at least one byte.  */
+-  eassert (charpos <= bytepos);
+-
+   struct Lisp_Marker *m = ALLOCATE_PLAIN_PSEUDOVECTOR (struct Lisp_Marker,
+ 						       PVEC_MARKER);
+   m->buffer = buf;
+-  m->charpos = charpos;
+-  m->bytepos = bytepos;
+   m->insertion_type = 0;
+   m->need_adjustment = 0;
+-#ifdef HAVE_MPS
+-  igc_add_marker (buf, m);
+-#else
+-  m->next = BUF_MARKERS (buf);
+-  BUF_MARKERS (buf) = m;
+-#endif
++  marker_vector_add (buf, m);
++  marker_vector_set_charpos (m, charpos);
+   return make_lisp_ptr (m, Lisp_Vectorlike);
+ }
+ 
+@@ -6511,6 +6498,13 @@ mark_buffer (struct buffer *buffer)
+ 
+   mark_interval_tree (buffer_intervals (buffer));
+ 
++  /* Mark the marker vector itself live, but don't process its contents
++     yet, because these are weak references.  The marker vector can
++     already have been set to nil in kill-buffer.  */
++  Lisp_Object mv = BUF_MARKERS (buffer);
++  if (!NILP (mv))
++    set_vector_marked (XVECTOR (mv));
++
+   /* For now, we just don't mark the undo_list.  It's done later in
+      a special way just before the sweep phase, and after stripping
+      some of its elements that are not needed any more.
+@@ -6518,7 +6512,7 @@ mark_buffer (struct buffer *buffer)
+      for dead buffers, the undo_list should be nil (set by Fkill_buffer),
+      but just to be on the safe side, we mark it here.  */
+   if (!BUFFER_LIVE_P (buffer))
+-      mark_object (BVAR (buffer, undo_list));
++    mark_object (BVAR (buffer, undo_list));
+ 
+   if (!itree_empty_p (buffer->overlays))
+     mark_overlays (buffer->overlays->root);
+@@ -7350,21 +7344,22 @@ sweep_symbols (void)
+   gcstat.total_free_symbols = num_free;
+ }
+ 
+-/* Remove BUFFER's markers that are due to be swept.  This is needed since
+-   we treat BUF_MARKERS and markers's `next' field as weak pointers.  */
++/* Remove BUFFER's markers that are due to be swept.  This is needed
++   since we treat marker references from BUF_MARKER as weak references.
++   This relies on the fact that marker vectors only contain markers,
++   fixnums and nil, which means we only have to look at the marker
++   slots.  If such a marker is not yet marked, it's dead and we remove
++   it from the marker vector.  If it is not dead, it won't be freed
++   by sweep_vectors which is called after sweep_buffers.  */
++
+ static void
+-unchain_dead_markers (struct buffer *buffer)
++unchain_dead_markers (struct buffer *b)
+ {
+-  struct Lisp_Marker *this, **prev = &BUF_MARKERS (buffer);
+-
+-  while ((this = *prev))
+-    if (vectorlike_marked_p (&this->header))
+-      prev = &this->next;
+-    else
+-      {
+-        this->buffer = NULL;
+-        *prev = this->next;
+-      }
++  FOR_EACH_MARKER (b, m)
++    {
++      if (!vectorlike_marked_p (&m->header))
++	marker_vector_remove (XVECTOR (BUF_MARKERS (b)), m);
++    }
+ }
+ 
+ NO_INLINE /* For better stack traces */
+diff --git a/src/buffer.c b/src/buffer.c
+index f5891c992d3..6cb71c70c13 100644
+--- a/src/buffer.c
++++ b/src/buffer.c
+@@ -44,6 +44,7 @@ Copyright (C) 1985-2025 Free Software Foundation, Inc.
+ #include "itree.h"
+ #include "pdumper.h"
+ #include "igc.h"
++#include "text-index.h"
+ 
+ #ifdef WINDOWSNT
+ #include "w32heap.h"		/* for mmap_* */
+@@ -597,6 +598,7 @@ DEFUN ("get-buffer-create", Fget_buffer_create, Sget_buffer_create, 1, 2, 0,
+ 
+   /* An ordinary buffer uses its own struct buffer_text.  */
+   b->text = &b->own_text;
++  b->text->index = NULL;
+   b->base_buffer = NULL;
+   /* No one shares the text with us now.  */
+   b->indirections = 0;
+@@ -621,6 +623,8 @@ DEFUN ("get-buffer-create", Fget_buffer_create, Sget_buffer_create, 1, 2, 0,
+   b->begv_byte = BEG_BYTE;
+   b->zv_byte = BEG_BYTE;
+ 
++  BUF_MARKERS (b) = make_marker_vector ();
++
+   BUF_GPT (b) = BEG;
+   BUF_GPT_BYTE (b) = BEG_BYTE;
+ 
+@@ -671,11 +675,6 @@ DEFUN ("get-buffer-create", Fget_buffer_create, Sget_buffer_create, 1, 2, 0,
+   reset_buffer_local_variables (b, 1);
+ 
+   bset_mark (b, Fmake_marker ());
+-#ifdef HAVE_MPS
+-  BUF_MARKERS (b) = Qnil;
+-#else
+-  BUF_MARKERS (b) = NULL;
+-#endif
+   /* Put this in the alist of all live buffers.  */
+   XSETBUFFER (buffer, b);
+   Vbuffer_alist = nconc2 (Vbuffer_alist, list1 (Fcons (name, buffer)));
+@@ -744,8 +743,8 @@ clone_per_buffer_values (struct buffer *from, struct buffer *to)
+       if (MARKERP (obj) && XMARKER (obj)->buffer == from)
+ 	{
+ 	  struct Lisp_Marker *m = XMARKER (obj);
+-
+-	  obj = build_marker (to, m->charpos, m->bytepos);
++	  const ptrdiff_t charpos = marker_vector_charpos (m);
++	  obj = build_marker (to, charpos);
+ 	  XMARKER (obj)->insertion_type = m->insertion_type;
+ 	}
+ 
+@@ -776,9 +775,9 @@ record_buffer_markers (struct buffer *b)
+       eassert (!NILP (BVAR (b, zv_marker)));
+ 
+       XSETBUFFER (buffer, b);
+-      set_marker_both (BVAR (b, pt_marker), buffer, b->pt, b->pt_byte);
+-      set_marker_both (BVAR (b, begv_marker), buffer, b->begv, b->begv_byte);
+-      set_marker_both (BVAR (b, zv_marker), buffer, b->zv, b->zv_byte);
++      set_marker_both (BVAR (b, pt_marker), buffer, b->pt);
++      set_marker_both (BVAR (b, begv_marker), buffer, b->begv);
++      set_marker_both (BVAR (b, zv_marker), buffer, b->zv);
+     }
+ }
+ 
+@@ -860,6 +859,8 @@ DEFUN ("make-indirect-buffer", Fmake_indirect_buffer, Smake_indirect_buffer,
+ 
+   /* Use the base buffer's text object.  */
+   b->text = b->base_buffer->text;
++  /* Make sure index has a defined value.  */
++  b->own_text.index = NULL;
+   /* We have no own text.  */
+   b->indirections = -1;
+   /* Notify base buffer that we share the text now.  */
+@@ -917,16 +918,13 @@ DEFUN ("make-indirect-buffer", Fmake_indirect_buffer, Smake_indirect_buffer,
+       eassert (NILP (BVAR (b->base_buffer, zv_marker)));
+ 
+       bset_pt_marker (b->base_buffer,
+-		      build_marker (b->base_buffer, b->base_buffer->pt,
+-				    b->base_buffer->pt_byte));
++		      build_marker (b->base_buffer, b->base_buffer->pt));
+ 
+       bset_begv_marker (b->base_buffer,
+-			build_marker (b->base_buffer, b->base_buffer->begv,
+-				      b->base_buffer->begv_byte));
++			build_marker (b->base_buffer, b->base_buffer->begv));
+ 
+       bset_zv_marker (b->base_buffer,
+-		      build_marker (b->base_buffer, b->base_buffer->zv,
+-				    b->base_buffer->zv_byte));
++		      build_marker (b->base_buffer, b->base_buffer->zv));
+ 
+       XMARKER (BVAR (b->base_buffer, zv_marker))->insertion_type = 1;
+     }
+@@ -934,9 +932,9 @@ DEFUN ("make-indirect-buffer", Fmake_indirect_buffer, Smake_indirect_buffer,
+   if (NILP (clone))
+     {
+       /* Give the indirect buffer markers for its narrowing.  */
+-      bset_pt_marker (b, build_marker (b, b->pt, b->pt_byte));
+-      bset_begv_marker (b, build_marker (b, b->begv, b->begv_byte));
+-      bset_zv_marker (b, build_marker (b, b->zv, b->zv_byte));
++      bset_pt_marker (b, build_marker (b, b->pt));
++      bset_begv_marker (b, build_marker (b, b->begv));
++      bset_zv_marker (b, build_marker (b, b->zv));
+       XMARKER (BVAR (b, zv_marker))->insertion_type = 1;
+     }
+   else
+@@ -2084,8 +2082,6 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+      insisted on circular lists) so allow quitting here.  */
+   frames_discard_buffer (buffer);
+ 
+-  clear_charpos_cache (b);
+-
+   tem = Vinhibit_quit;
+   Vinhibit_quit = Qt;
+   /* Once the buffer is removed from Vbuffer_alist, its undo_list field is
+@@ -2103,27 +2099,12 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+       /* Unchain all markers that belong to this indirect buffer.
+ 	 Don't unchain the markers that belong to the base buffer
+ 	 or its other indirect buffers.  */
+-#ifdef HAVE_MPS
+-      DO_MARKERS (b, m)
++      FOR_EACH_MARKER (b, m)
+ 	{
+ 	  if (m->buffer == b)
+-	    igc_remove_marker (b, m);
++	    marker_vector_remove (XVECTOR (BUF_MARKERS (b)), m);
+ 	}
+-      END_DO_MARKERS;
+-#else
+-      struct Lisp_Marker **mp = &BUF_MARKERS (b);
+-      struct Lisp_Marker *m;
+-      while ((m = *mp))
+-	{
+-	  if (m->buffer == b)
+-	    {
+-	      m->buffer = NULL;
+-	      *mp = m->next;
+-	    }
+-	  else
+-	    mp = &m->next;
+-	}
+- #endif
++
+      /* Intervals should be owned by the base buffer (Bug#16502).  */
+       i = buffer_intervals (b);
+       if (i)
+@@ -2137,18 +2118,7 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+     {
+       /* Unchain all markers of this buffer and its indirect buffers.
+ 	 and leave them pointing nowhere.  */
+-#ifdef HAVE_MPS
+-      igc_remove_all_markers (b);
+-#else
+-      for (struct Lisp_Marker *m = BUF_MARKERS (b); m; )
+-	{
+-	  struct Lisp_Marker *next = m->next;
+-	  m->buffer = 0;
+-	  m->next = NULL;
+-	  m = next;
+-	}
+-      BUF_MARKERS (b) = NULL;
+-#endif
++      marker_vector_reset (b);
+       set_buffer_intervals (b, NULL);
+ 
+       /* Perhaps we should explicitly free the interval tree here...  */
+@@ -2198,6 +2168,7 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+       free_region_cache (b->bidi_paragraph_cache);
+       b->bidi_paragraph_cache = 0;
+     }
++  text_index_free (b->own_text.index);
+   bset_width_table (b, Qnil);
+   unblock_input ();
+ 
+@@ -2679,7 +2650,7 @@ #define swapfield_(field, type) \
+   other_buffer->text->end_unchanged = other_buffer->text->gpt;
+   swap_buffer_overlays (current_buffer, other_buffer);
+   {
+-    DO_MARKERS (current_buffer, m)
++    FOR_EACH_MARKER (current_buffer, m)
+       {
+ 	if (m->buffer == other_buffer)
+ 	  m->buffer = current_buffer;
+@@ -2688,8 +2659,7 @@ #define swapfield_(field, type) \
+ 	     BUF_MARKERS(buf) should either be for `buf' or dead.  */
+ 	  eassert (!m->buffer);
+       }
+-    END_DO_MARKERS;
+-    DO_MARKERS (other_buffer, m)
++    FOR_EACH_MARKER (other_buffer, m)
+       {
+ 	if (m->buffer == current_buffer)
+ 	  m->buffer = other_buffer;
+@@ -2698,8 +2668,8 @@ #define swapfield_(field, type) \
+ 	     BUF_MARKERS(buf) should either be for `buf' or dead.  */
+ 	  eassert (!m->buffer);
+       }
+-    END_DO_MARKERS;
+   }
++
+   { /* Some of the C code expects that both window markers of a
+        live window points to that window's buffer.  So since we
+        just swapped the markers between the two buffers, we need
+@@ -2761,9 +2731,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+ current buffer is cleared.  */)
+   (Lisp_Object flag)
+ {
+-#ifndef HAVE_MPS
+-  struct Lisp_Marker *tail, *markers;
+-#endif
+   Lisp_Object btail, other;
+   ptrdiff_t begv, zv;
+   bool narrowed = (BEG != BEGV || Z != ZV);
+@@ -2781,9 +2748,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+      instead.  */
+   bset_undo_list (current_buffer, Qt);
+ 
+-  /* If the cached position is for this buffer, clear it out.  */
+-  clear_charpos_cache (current_buffer);
+-
+   if (NILP (flag))
+     begv = BEGV_BYTE, zv = ZV_BYTE;
+   else
+@@ -2812,11 +2776,11 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+       GPT = GPT_BYTE;
+       TEMP_SET_PT_BOTH (PT_BYTE, PT_BYTE);
+ 
+-      DO_MARKERS (current_buffer, tail)
++      FOR_EACH_MARKER (current_buffer, tail)
+ 	{
+-	  tail->charpos = tail->bytepos;
++	  const ptrdiff_t bytepos = marker_vector_bytepos (tail);
++	  marker_vector_set_charpos (tail, bytepos);
+ 	}
+-      END_DO_MARKERS;
+ 
+       /* Convert multibyte form of 8-bit characters to unibyte.  */
+       pos = BEG;
+@@ -2966,38 +2930,13 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+ 	TEMP_SET_PT_BOTH (position, byte);
+       }
+ 
+-#ifdef HAVE_MPS
+-      DO_MARKERS (current_buffer, tail)
+-	{
+-	  Lisp_Object buf_markers = BUF_MARKERS (current_buffer);
+-	  BUF_MARKERS (current_buffer) = Qnil;
+-	  tail->bytepos = advance_to_char_boundary (tail->bytepos);
+-	  tail->charpos = BYTE_TO_CHAR (tail->bytepos);
+-	  BUF_MARKERS (current_buffer) = buf_markers;
+-	}
+-      END_DO_MARKERS;
+-#else
+-      tail = markers = BUF_MARKERS (current_buffer);
+-
+-      /* This prevents BYTE_TO_CHAR (that is, buf_bytepos_to_charpos) from
+-	 getting confused by the markers that have not yet been updated.
+-	 It is also a signal that it should never create a marker.  */
+-      BUF_MARKERS (current_buffer) = NULL;
+-
+-      for (; tail; tail = tail->next)
++      FOR_EACH_MARKER (current_buffer, tail)
+ 	{
+-	  tail->bytepos = advance_to_char_boundary (tail->bytepos);
+-	  tail->charpos = BYTE_TO_CHAR (tail->bytepos);
++	  ptrdiff_t bytepos = marker_vector_bytepos (tail);
++	  bytepos = advance_to_char_boundary (bytepos);
++	  marker_vector_set_charpos (tail, BYTE_TO_CHAR (bytepos));
+ 	}
+ 
+-      /* Make sure no markers were put on the chain
+-	 while the chain value was incorrect.  */
+-      if (BUF_MARKERS (current_buffer))
+-	emacs_abort ();
+-
+-      BUF_MARKERS (current_buffer) = markers;
+-#endif
+-
+       /* Do this last, so it can calculate the new correspondences
+ 	 between chars and bytes.  */
+       /* FIXME: Is it worth the trouble, really?  Couldn't we just throw
+diff --git a/src/buffer.h b/src/buffer.h
+index a5283e5dc11..635ba64fb42 100644
+--- a/src/buffer.h
++++ b/src/buffer.h
+@@ -26,6 +26,7 @@ #define EMACS_BUFFER_H
+ #include "character.h"
+ #include "lisp.h"
+ #include "itree.h"
++#include "text-index.h"
+ 
+ INLINE_HEADER_BEGIN
+ 
+@@ -217,7 +218,7 @@ #define BUF_BYTES_MAX \
+    Do not check that the position is in range.  */
+ 
+ #define FETCH_BYTE(n) (*BYTE_POS_ADDR (n))
+-
++
+ /* Define the actual buffer data structures.  */
+ 
+ /* This data structure stores the cache of a position and its line and
+@@ -234,6 +235,8 @@ #define FETCH_BYTE(n) (*BYTE_POS_ADDR (n))
+   ptrdiff_t col;
+ };
+ 
++struct text_index;
++
+ /* This data structure describes the actual text contents of a buffer.
+    It is shared between indirect buffers and their base buffer.  */
+ 
+@@ -285,18 +288,8 @@ #define FETCH_BYTE(n) (*BYTE_POS_ADDR (n))
+     /* Properties of this buffer's text.  */
+     INTERVAL intervals;
+ 
+-# ifdef HAVE_MPS
++    /* Marker vector.  */
+     Lisp_Object markers;
+-# else
+-    /* The markers that refer to this buffer.
+-       This is actually a single marker ---
+-       successive elements in its marker `chain'
+-       are the other markers referring to this buffer.
+-       This is a singly linked unordered list, which means that it's
+-       very cheap to add a marker to the list and it's also very cheap
+-       to move a marker within a buffer.  */
+-    struct Lisp_Marker *markers;
+-# endif
+ 
+     /* Usually false.  Temporarily true in decode_coding_gap to
+        prevent Fgarbage_collect from shrinking the gap and losing
+@@ -305,6 +298,9 @@ #define FETCH_BYTE(n) (*BYTE_POS_ADDR (n))
+ 
+     /* True if it needs to be redisplayed.  */
+     bool_bf redisplay : 1;
++
++    /* Index supporting char <-> byte position mapping.  */
++    struct text_index *index;
+   };
+ 
+ /* Most code should use this macro to access Lisp fields in struct buffer.  */
+@@ -746,114 +742,6 @@ #define BVAR(buf, field) ((buf)->field ## _)
+   Lisp_Object undo_list_;
+ };
+ 
+-struct marker_it
+-{
+-# ifdef HAVE_MPS
+-  struct Lisp_Vector *v;
+-  Lisp_Object obj;
+-  ptrdiff_t slot;
+-# else
+-  struct Lisp_Marker *marker;
+-#endif
+-};
+-
+-# ifdef HAVE_MPS
+-
+-enum
+-{
+-  IGC_IDX_FREE_LIST = 0,
+-  IGC_IDX_HEAD = 1,
+-  IGC_IDX_START = 2,
+-
+-  IGC_OFF_NEXT = 0,
+-  IGC_OFF_PREV = 1,
+-  IGC_OFF_MARKER = 2,
+-  IGC_MA_NSLOTS = 3,
+-};
+-
+-INLINE int
+-slot_to_index (int slot)
+-{
+-  return (slot * IGC_MA_NSLOTS) + IGC_IDX_START;
+-}
+-
+-#define IGC_MA_FREE_LIST(v) (v)->contents[IGC_IDX_FREE_LIST]
+-#define IGC_MA_HEAD(v) (v)->contents[IGC_IDX_HEAD]
+-
+-#define IGC_MA_MARKER(v, slot) (v)->contents[slot_to_index (slot) + IGC_OFF_MARKER]
+-#define IGC_MA_NEXT(v, slot) (v)->contents[slot_to_index (slot) + IGC_OFF_NEXT]
+-#define IGC_MA_PREV(v, slot) (v)->contents[slot_to_index (slot) + IGC_OFF_PREV]
+-
+-#define IGC_MA_CAPACITY(v) (((v)->header.size - IGC_IDX_START) / IGC_MA_NSLOTS)
+-
+-INLINE struct marker_it
+-marker_it_init (struct buffer *b)
+-{
+-  if (VECTORP (BUF_MARKERS (b)))
+-    {
+-      struct Lisp_Vector *v = XVECTOR (BUF_MARKERS (b));
+-      ptrdiff_t slot = XFIXNUM (IGC_MA_HEAD (v));
+-      if (slot >= 0)
+-	return (struct marker_it)
+-	  { .slot = slot, .v = v, .obj = IGC_MA_MARKER (v, slot) };
+-    }
+-  return (struct marker_it){ .obj = Qnil };
+-}
+-
+-INLINE bool
+-marker_it_valid (struct marker_it *it)
+-{
+-  return MARKERP (it->obj);
+-}
+-
+-INLINE void
+-marker_it_next (struct marker_it *it)
+-{
+-  it->slot = XFIXNUM (IGC_MA_NEXT (it->v, it->slot));
+-  it->obj = it->slot < 0 ? Qnil : IGC_MA_MARKER (it->v, it->slot);
+-}
+-
+-INLINE struct Lisp_Marker *
+-marker_it_marker (struct marker_it *it)
+-{
+-  return XMARKER (it->obj);
+-}
+-
+-# else
+-INLINE struct marker_it
+-marker_it_init (struct buffer *b)
+-{
+-  return (struct marker_it) { .marker = BUF_MARKERS (b) };
+-}
+-
+-INLINE bool
+-marker_it_valid (struct marker_it *it)
+-{
+-  return it->marker != NULL;
+-}
+-
+-INLINE void
+-marker_it_next (struct marker_it *it)
+-{
+-  it->marker = it->marker->next;
+-}
+-
+-INLINE struct Lisp_Marker *
+-marker_it_marker (struct marker_it *it)
+-{
+-  return it->marker;
+-}
+-
+-# endif
+-
+-# define DO_MARKERS(b, m)                                                 \
+-  for (struct marker_it it_ = marker_it_init (b); marker_it_valid (&it_); \
+-       marker_it_next (&it_))                                             \
+-    {									\
+-       struct Lisp_Marker *m = marker_it_marker (&it_);
+-
+-# define END_DO_MARKERS }
+-
+ struct sortvec
+ {
+   Lisp_Object overlay;
+@@ -1929,4 +1817,6 @@ dec_both (ptrdiff_t *charpos, ptrdiff_t *bytepos)
+ int compare_overlays (const void *v1, const void *v2);
+ void make_sortvec_item (struct sortvec *item, Lisp_Object overlay);
+ 
++#include "marker-vector.h"
++
+ #endif /* EMACS_BUFFER_H */
+diff --git a/src/callint.c b/src/callint.c
+index ee06e6973f2..8a71e6ba171 100644
+--- a/src/callint.c
++++ b/src/callint.c
+@@ -500,7 +500,7 @@ DEFUN ("call-interactively", Fcall_interactively, Scall_interactively, 1, 3, 0,
+ 	  break;
+ 
+ 	case 'd':		/* Value of point.  Does not do I/O.  */
+-	  set_marker_both (point_marker, Qnil, PT, PT_BYTE);
++	  set_marker_both (point_marker, Qnil, PT);
+ 	  args[i] = point_marker;
+ 	  /* visargs[i] = Qnil; */
+ 	  varies[i] = 1;
+@@ -658,7 +658,7 @@ DEFUN ("call-interactively", Fcall_interactively, Scall_interactively, 1, 3, 0,
+ 	case 'r':		/* Region, point and mark as 2 args.  */
+ 	  {
+ 	    check_mark (true);
+-	    set_marker_both (point_marker, Qnil, PT, PT_BYTE);
++	    set_marker_both (point_marker, Qnil, PT);
+ 	    ptrdiff_t mark = marker_position (BVAR (current_buffer, mark));
+ 	    /* visargs[i] = visargs[i + 1] = Qnil; */
+ 	    args[i] = PT < mark ? point_marker : BVAR (current_buffer, mark);
+diff --git a/src/coding.c b/src/coding.c
+index 594677b224e..fc5ffb9c610 100644
+--- a/src/coding.c
++++ b/src/coding.c
+@@ -8122,13 +8122,13 @@ decode_coding_object (struct coding_system *coding,
+ 	move_gap_both (from, from_byte);
+       if (BASE_EQ (src_object, dst_object))
+ 	{
+-	  DO_MARKERS (current_buffer, tail)
++	  FOR_EACH_MARKER (current_buffer, tail)
+ 	    {
++	      const ptrdiff_t charpos = marker_vector_charpos (tail);
+ 	      tail->need_adjustment
+-		= tail->charpos == (tail->insertion_type ? from : to);
++		= charpos == (tail->insertion_type ? from : to);
+ 	      need_marker_adjustment |= tail->need_adjustment;
+ 	    }
+-	  END_DO_MARKERS;
+ 	  saved_pt = PT, saved_pt_byte = PT_BYTE;
+ 	  TEMP_SET_PT_BOTH (from, from_byte);
+ 	  current_buffer->text->inhibit_shrinking = true;
+@@ -8253,26 +8253,25 @@ decode_coding_object (struct coding_system *coding,
+ 
+       if (need_marker_adjustment)
+ 	{
+-	  DO_MARKERS (current_buffer, tail)
++	  FOR_EACH_MARKER (current_buffer, tail)
+ 	    {
+ 	      if (tail->need_adjustment)
+ 		{
+ 		  tail->need_adjustment = 0;
+ 		  if (tail->insertion_type)
+ 		    {
+-		      tail->bytepos = from_byte;
+-		      tail->charpos = from;
++		      marker_vector_set_charpos (tail, from);
+ 		    }
+ 		  else
+ 		    {
+-		      tail->bytepos = from_byte + coding->produced;
+-		      tail->charpos
++		      ptrdiff_t bytepos = from_byte + coding->produced;
++		      ptrdiff_t charpos
+ 			= (NILP (BVAR (current_buffer, enable_multibyte_characters))
+-			   ? tail->bytepos : from + coding->produced_char);
++			   ? bytepos : from + coding->produced_char);
++		      marker_vector_set_charpos (tail, charpos);
+ 		    }
+ 		}
+ 	    }
+-	  END_DO_MARKERS;
+ 	}
+     }
+ 
+@@ -8343,13 +8342,13 @@ encode_coding_object (struct coding_system *coding,
+   if (BASE_EQ (src_object, dst_object) && BUFFERP (src_object))
+     {
+       same_buffer = true;
+-      DO_MARKERS (XBUFFER (src_object), tail)
++      FOR_EACH_MARKER (XBUFFER (src_object), tail)
+ 	{
++	  const ptrdiff_t charpos = marker_vector_charpos (tail);
+ 	  tail->need_adjustment
+-	    = tail->charpos == (tail->insertion_type ? from : to);
++	    = charpos == (tail->insertion_type ? from : to);
+ 	  need_marker_adjustment |= tail->need_adjustment;
+ 	}
+-      END_DO_MARKERS;
+     }
+ 
+   if (! NILP (CODING_ATTR_PRE_WRITE (attrs)))
+@@ -8507,26 +8506,25 @@ encode_coding_object (struct coding_system *coding,
+ 
+       if (need_marker_adjustment)
+ 	{
+-	  DO_MARKERS (current_buffer, tail)
++	  FOR_EACH_MARKER (current_buffer, tail)
+ 	    {
+ 	      if (tail->need_adjustment)
+ 		{
+ 		  tail->need_adjustment = 0;
+ 		  if (tail->insertion_type)
+ 		    {
+-		      tail->bytepos = from_byte;
+-		      tail->charpos = from;
++		      marker_vector_set_charpos (tail, from);
+ 		    }
+ 		  else
+ 		    {
+-		      tail->bytepos = from_byte + coding->produced;
+-		      tail->charpos
++		      const ptrdiff_t bytepos = from_byte + coding->produced;
++		      const ptrdiff_t charpos
+ 			= (NILP (BVAR (current_buffer, enable_multibyte_characters))
+-			   ? tail->bytepos : from + coding->produced_char);
++			   ? bytepos : from + coding->produced_char);
++		      marker_vector_set_charpos (tail, charpos);
+ 		    }
+ 		}
+ 	    }
+-	  END_DO_MARKERS;
+ 	}
+     }
+ 
+diff --git a/src/composite.c b/src/composite.c
+index 97baa5c56a2..8603bf2cec1 100644
+--- a/src/composite.c
++++ b/src/composite.c
+@@ -941,7 +941,7 @@ autocmp_chars (Lisp_Object rule, ptrdiff_t charpos, ptrdiff_t bytepos,
+   specpdl_ref count = SPECPDL_INDEX ();
+   Lisp_Object pos = make_fixnum (charpos);
+   ptrdiff_t to;
+-  ptrdiff_t pt = PT, pt_byte = PT_BYTE;
++  ptrdiff_t pt = PT;
+   Lisp_Object re, font_object, lgstring;
+   ptrdiff_t len;
+ 
+@@ -982,7 +982,7 @@ autocmp_chars (Lisp_Object rule, ptrdiff_t charpos, ptrdiff_t bytepos,
+       /* Save point as marker before calling out to lisp.  */
+       if (NILP (string))
+ 	record_unwind_protect (restore_point_unwind,
+-			       build_marker (current_buffer, pt, pt_byte));
++			       build_marker (current_buffer, pt));
+       lgstring = safe_calln (Vauto_composition_function, AREF (rule, 2),
+ 			    pos, make_fixnum (to), font_object, string,
+ 			    direction);
+diff --git a/src/dispextern.h b/src/dispextern.h
+index d28a882a601..3d15c3b20cd 100644
+--- a/src/dispextern.h
++++ b/src/dispextern.h
+@@ -322,7 +322,7 @@ #define CLIP_TEXT_POS_FROM_MARKER(POS, MARKER)		\
+ /* Set marker MARKER from text position POS.  */
+ 
+ #define SET_MARKER_FROM_TEXT_POS(MARKER, POS) \
+-     set_marker_both (MARKER, Qnil, CHARPOS (POS), BYTEPOS (POS))
++     set_marker_both (MARKER, Qnil, CHARPOS (POS))
+ 
+ /* Value is non-zero if character and byte positions of POS1 and POS2
+    are equal.  */
+diff --git a/src/editfns.c b/src/editfns.c
+index e704d617869..ee8adf314f4 100644
+--- a/src/editfns.c
++++ b/src/editfns.c
+@@ -199,7 +199,7 @@ DEFUN ("point-marker", Fpoint_marker, Spoint_marker, 0, 0, 0,
+        doc: /* Return value of point, as a marker object.  */)
+   (void)
+ {
+-  return build_marker (current_buffer, PT, PT_BYTE);
++  return build_marker (current_buffer, PT);
+ }
+ 
+ DEFUN ("goto-char", Fgoto_char, Sgoto_char, 1, 1,
+@@ -889,7 +889,7 @@ DEFUN ("point-min-marker", Fpoint_min_marker, Spoint_min_marker, 0, 0, 0,
+ This is the beginning, unless narrowing (a buffer restriction) is in effect.  */)
+   (void)
+ {
+-  return build_marker (current_buffer, BEGV, BEGV_BYTE);
++  return build_marker (current_buffer, BEGV);
+ }
+ 
+ DEFUN ("point-max", Fpoint_max, Spoint_max, 0, 0, 0,
+@@ -909,7 +909,7 @@ DEFUN ("point-max-marker", Fpoint_max_marker, Spoint_max_marker, 0, 0, 0,
+ is in effect, in which case it is less.  */)
+   (void)
+ {
+-  return build_marker (current_buffer, ZV, ZV_BYTE);
++  return build_marker (current_buffer, ZV);
+ }
+ 
+ DEFUN ("gap-position", Fgap_position, Sgap_position, 0, 0, 0,
+@@ -3050,8 +3050,8 @@ save_restriction_save_1 (void)
+     {
+       Lisp_Object beg, end;
+ 
+-      beg = build_marker (current_buffer, BEGV, BEGV_BYTE);
+-      end = build_marker (current_buffer, ZV, ZV_BYTE);
++      beg = build_marker (current_buffer, BEGV);
++      end = build_marker (current_buffer, ZV);
+ 
+       /* END must move forward if text is inserted at its exact location.  */
+       XMARKER (end)->insertion_type = 1;
+@@ -3084,22 +3084,27 @@ save_restriction_restore_1 (Lisp_Object data)
+       struct Lisp_Marker *end = XMARKER (XCDR (data));
+       eassert (buf == end->buffer);
+ 
++      ptrdiff_t beg_charpos, end_charpos;
+       if (buf /* Verify marker still points to a buffer.  */
+-	  && (beg->charpos != BUF_BEGV (buf) || end->charpos != BUF_ZV (buf)))
++	  && (beg_charpos = marker_vector_charpos (beg),
++	      end_charpos = marker_vector_charpos (end),
++	      beg_charpos != BUF_BEGV (buf) || end_charpos != BUF_ZV (buf)))
+ 	/* The restriction has changed from the saved one, so restore
+ 	   the saved restriction.  */
+ 	{
+ 	  ptrdiff_t pt = BUF_PT (buf);
++	  const ptrdiff_t beg_bytepos = marker_vector_bytepos (beg);
++	  const ptrdiff_t end_bytepos = marker_vector_bytepos (end);
+ 
+-	  SET_BUF_BEGV_BOTH (buf, beg->charpos, beg->bytepos);
+-	  SET_BUF_ZV_BOTH (buf, end->charpos, end->bytepos);
++	  SET_BUF_BEGV_BOTH (buf, beg_charpos, beg_bytepos);
++	  SET_BUF_ZV_BOTH (buf, end_charpos, end_bytepos);
+ 
+-	  if (pt < beg->charpos || pt > end->charpos)
++	  if (pt < beg_charpos || pt > end_charpos)
+ 	    /* The point is outside the new visible range, move it inside. */
+ 	    SET_BUF_PT_BOTH (buf,
+-			     clip_to_bounds (beg->charpos, pt, end->charpos),
+-			     clip_to_bounds (beg->bytepos, BUF_PT_BYTE (buf),
+-					     end->bytepos));
++			     clip_to_bounds (beg_charpos, pt, end_charpos),
++			     clip_to_bounds (beg_bytepos, BUF_PT_BYTE (buf),
++					     end_bytepos));
+ 
+ 	  buf->clip_changed = 1; /* Remember that the narrowing changed. */
+ 	}
+@@ -4431,7 +4436,7 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
+ 		   ptrdiff_t start1_byte, ptrdiff_t end1_byte,
+ 		   ptrdiff_t start2_byte, ptrdiff_t end2_byte)
+ {
+-  register ptrdiff_t amt1, amt1_byte, amt2, amt2_byte, diff, diff_byte, mpos;
++  register ptrdiff_t amt1, amt2, diff, mpos;
+ 
+   /* Update point as if it were a marker.  */
+   if (PT < start1)
+@@ -4457,29 +4462,15 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
+ 
+   /* The difference between the region's lengths */
+   diff = (end2 - start2) - (end1 - start1);
+-  diff_byte = (end2_byte - start2_byte) - (end1_byte - start1_byte);
+ 
+   /* For shifting each marker in a region by the length of the other
+      region plus the distance between the regions.  */
+   amt1 = (end2 - start2) + (start2 - end1);
+   amt2 = (end1 - start1) + (start2 - end1);
+-  amt1_byte = (end2_byte - start2_byte) + (start2_byte - end1_byte);
+-  amt2_byte = (end1_byte - start1_byte) + (start2_byte - end1_byte);
+ 
+-  DO_MARKERS (current_buffer, marker)
++  FOR_EACH_MARKER (current_buffer, marker)
+     {
+-      mpos = marker->bytepos;
+-      if (mpos >= start1_byte && mpos < end2_byte)
+-	{
+-	  if (mpos < end1_byte)
+-	    mpos += amt1_byte;
+-	  else if (mpos < start2_byte)
+-	    mpos += diff_byte;
+-	  else
+-	    mpos -= amt2_byte;
+-	  marker->bytepos = mpos;
+-	}
+-      mpos = marker->charpos;
++      mpos = marker_vector_charpos (marker);
+       if (mpos >= start1 && mpos < end2)
+ 	{
+ 	  if (mpos < end1)
+@@ -4489,9 +4480,8 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
+ 	  else
+ 	    mpos -= amt2;
+ 	}
+-      marker->charpos = mpos;
++      marker_vector_set_charpos (marker, mpos);
+     }
+-  END_DO_MARKERS;
+ }
+ 
+ DEFUN ("transpose-regions", Ftranspose_regions, Stranspose_regions, 4, 5,
+diff --git a/src/emacs.c b/src/emacs.c
+index 5951c6c8c82..f42ce11f92b 100644
+--- a/src/emacs.c
++++ b/src/emacs.c
+@@ -96,6 +96,7 @@ #define MAIN_PROGRAM
+ #include "intervals.h"
+ #include "character.h"
+ #include "buffer.h"
++#include "text-index.h"
+ #include "window.h"
+ #include "xwidget.h"
+ #include "atimer.h"
+@@ -2317,6 +2318,7 @@ android_emacs_init (int argc, char **argv, char *dump_file)
+       syms_of_eval ();
+       syms_of_floatfns ();
+ 
++      syms_of_text_index ();
+       syms_of_buffer ();
+       syms_of_bytecode ();
+       syms_of_callint ();
+diff --git a/src/fns.c b/src/fns.c
+index f4208d371ab..baa294f1e6e 100644
+--- a/src/fns.c
++++ b/src/fns.c
+@@ -2930,7 +2930,8 @@ internal_equal_1 (Lisp_Object o1, Lisp_Object o2, enum equal_kind equal_kind,
+ 	  {
+ 	    return (XMARKER (o1)->buffer == XMARKER (o2)->buffer
+ 		    && (XMARKER (o1)->buffer == 0
+-			|| XMARKER (o1)->bytepos == XMARKER (o2)->bytepos));
++			|| (marker_vector_charpos (XMARKER (o1))
++			    == marker_vector_charpos (XMARKER (o2)))));
+ 	  }
+ 	if (BOOL_VECTOR_P (o1))
+ 	  {
+@@ -3154,8 +3155,8 @@ value_cmp (Lisp_Object a, Lisp_Object b, int maxdepth)
+ 		  int cmp = value_cmp (buf_a, buf_b, maxdepth - 1);
+ 		  if (cmp != 0)
+ 		    return cmp;
+-		  ptrdiff_t pa = XMARKER (a)->charpos;
+-		  ptrdiff_t pb = XMARKER (b)->charpos;
++		  ptrdiff_t pa = marker_vector_charpos (XMARKER (a));
++		  ptrdiff_t pb = marker_vector_charpos (XMARKER (b));
+ 		  return pa < pb ? -1 : pa > pb;
+ 		}
+ 
+@@ -6041,8 +6042,9 @@ sxhash_obj (Lisp_Object obj, int depth)
+ 	  return sxhash_bignum (obj);
+ 	else if (pvec_type == PVEC_MARKER)
+ 	  {
+-	    ptrdiff_t bytepos
+-	      = XMARKER (obj)->buffer ? XMARKER (obj)->bytepos : 0;
++	    const ptrdiff_t charpos = (XMARKER (obj)->buffer
++				       ? marker_vector_charpos (XMARKER (obj))
++				       : 0);
+ 	    EMACS_UINT hash;
+ #ifdef HAVE_MPS
+ 	    if (XMARKER (obj)->buffer)
+@@ -6056,7 +6058,7 @@ sxhash_obj (Lisp_Object obj, int depth)
+ #else
+ 	    hash = (intptr_t) XMARKER (obj)->buffer;
+ #endif
+-	    hash = sxhash_combine (hash, bytepos);
++	    hash = sxhash_combine (hash, charpos);
+ 	    return hash;
+ 	  }
+ 	else if (pvec_type == PVEC_BOOL_VECTOR)
+diff --git a/src/igc.c b/src/igc.c
+index 20fd9f1f72e..0039f4d6cde 100644
+--- a/src/igc.c
++++ b/src/igc.c
+@@ -2266,39 +2266,31 @@ fix_vectorlike (mps_ss_t ss, struct Lisp_Vector *v)
+   return MPS_RES_OK;
+ }
+ 
+-static void
+-unchain (struct Lisp_Vector *v, int slot)
+-{
+-  IGC_MA_MARKER (v, slot) = IGC_MA_FREE_LIST (v);
+-  IGC_MA_FREE_LIST (v) = make_fixnum (slot);
+-
+-  int prev = XFIXNUM (IGC_MA_PREV (v, slot));
+-  if (prev >= 0)
+-    IGC_MA_NEXT (v, prev) = IGC_MA_NEXT (v, slot);
+-  else
+-    IGC_MA_HEAD (v) = IGC_MA_NEXT (v, slot);
+-
+-  int next = XFIXNUM (IGC_MA_NEXT (v, slot));
+-  if (next >= 0)
+-    IGC_MA_PREV (v, next) = IGC_MA_PREV (v, slot);
+-}
+-
+ static mps_res_t
+ fix_marker_vector (mps_ss_t ss, struct Lisp_Vector *v)
+ {
+   MPS_SCAN_BEGIN (ss)
+   {
+-    for (ptrdiff_t slot = XFIXNUM (IGC_MA_HEAD (v)), next;
+-	 slot >= 0; slot = next)
++    const ptrdiff_t max_entry = XFIXNUM (v->contents[MARKER_VECTOR_MAX_ENTRY]);
++    for (ptrdiff_t e = MARKER_VECTOR_HEADER_SIZE;
++	 e <= max_entry; e += MARKER_VECTOR_ENTRY_SIZE)
+       {
+-	next = XFIXNUM (IGC_MA_NEXT (v, slot));
+-
+-	Lisp_Object old = IGC_MA_MARKER (v, slot);
+-	IGC_FIX12_OBJ (ss, &IGC_MA_MARKER (v, slot));
+-
+-	/* FIXME/igc: this is right for marker vectors only.  */
+-	if (NILP (IGC_MA_MARKER (v, slot)) && !NILP (old))
+-	  unchain (v, slot);
++	/* Note that we cannot access anything of a marker here because
++	   that is not allowed by MPS while scanning an unrelated
++	   object.  This includes MARKERP because that accesses the
++	   header of a marker.  */
++	Lisp_Object *p = &v->contents[e + MARKER_VECTOR_OFFSET_MARKER];
++	if (!NILP (*p) && !FIXNUMP (*p))
++	  {
++	    IGC_FIX12_OBJ (ss, p);
++	    if (NILP (*p))
++	      {
++		/* Changed to nil means the weak reference was to a dead
++		   marker.  Put on free-list.  */
++		v->contents[e] = v->contents[MARKER_VECTOR_FREE];
++		v->contents[MARKER_VECTOR_FREE] = make_fixnum (e);
++	      }
++	  }
+       }
+   }
+   MPS_SCAN_END (ss);
+@@ -4862,8 +4854,8 @@ igc_valid_lisp_object_p (Lisp_Object obj)
+   return 1;
+ }
+ 
+-static Lisp_Object
+-alloc_marker_vector (ptrdiff_t len, Lisp_Object init)
++Lisp_Object
++igc_alloc_marker_vector (ptrdiff_t len, Lisp_Object init)
+ {
+   struct Lisp_Vector *v
+     = alloc (header_size + len * word_size, IGC_OBJ_MARKER_VECTOR);
+@@ -4873,99 +4865,6 @@ alloc_marker_vector (ptrdiff_t len, Lisp_Object init)
+   return make_lisp_ptr (v, Lisp_Vectorlike);
+ }
+ 
+-static Lisp_Object
+-larger_marker_vector (Lisp_Object v)
+-{
+-  igc_assert (NILP (v)
+-	      || (VECTORP (v)
+-		  && XFIXNUM (IGC_MA_FREE_LIST (XVECTOR (v))) < 0));
+-  ptrdiff_t old_nslots = NILP (v) ? 0 : IGC_MA_CAPACITY (XVECTOR (v));
+-  ptrdiff_t new_nslots = max (4, 2 * old_nslots);
+-  ptrdiff_t alloc_len = new_nslots * IGC_MA_NSLOTS + IGC_IDX_START;
+-  Lisp_Object new_v = alloc_marker_vector (alloc_len, Qnil);
+-  struct Lisp_Vector *xnew_v = XVECTOR (new_v);
+-  ptrdiff_t slot = 0;
+-  if (VECTORP (v))
+-    {
+-      struct Lisp_Vector *xv = XVECTOR (v);
+-      IGC_MA_FREE_LIST (xnew_v) = IGC_MA_FREE_LIST (xv);
+-      IGC_MA_HEAD (xnew_v) = IGC_MA_HEAD (xv);
+-      for (slot = 0; slot < IGC_MA_CAPACITY (xv); ++slot)
+-	{
+-	  IGC_MA_MARKER (xnew_v, slot) = IGC_MA_MARKER (xv, slot);
+-	  IGC_MA_NEXT (xnew_v, slot) = IGC_MA_NEXT (xv, slot);
+-	  IGC_MA_PREV (xnew_v, slot) = IGC_MA_PREV (xv, slot);
+-	}
+-    }
+-  else
+-    IGC_MA_HEAD (xnew_v) = make_fixnum (-1);
+-
+-  for (; slot < IGC_MA_CAPACITY (xnew_v) - 1; ++slot)
+-    {
+-      IGC_MA_MARKER (xnew_v, slot) = make_fixnum (slot + 1);
+-      IGC_MA_NEXT (xnew_v, slot) = make_fixnum (-1);
+-      IGC_MA_PREV (xnew_v, slot) = make_fixnum (-1);
+-    }
+-
+-  IGC_MA_MARKER (xnew_v, slot) = make_fixnum (-1);
+-  IGC_MA_FREE_LIST (xnew_v) = make_fixnum (old_nslots);
+-  return new_v;
+-}
+-
+-void
+-igc_add_marker (struct buffer *b, struct Lisp_Marker *m)
+-{
+-  Lisp_Object v = BUF_MARKERS (b);
+-  igc_assert (NILP (v) || VECTORP (v));
+-  struct Lisp_Vector *xv = NILP (v) ? NULL : XVECTOR (v);
+-  ptrdiff_t slot = NILP (v) ? -1 : XFIXNUM (IGC_MA_FREE_LIST (xv));
+-  if (slot < 0)
+-    {
+-      v = BUF_MARKERS (b) = larger_marker_vector (v);
+-      xv = XVECTOR (v);
+-      slot = XFIXNUM (IGC_MA_FREE_LIST (xv));
+-    }
+-
+-  IGC_MA_FREE_LIST (xv) = IGC_MA_MARKER (xv, slot);
+-  IGC_MA_MARKER (xv, slot) = make_lisp_ptr (m, Lisp_Vectorlike);
+-  IGC_MA_NEXT (xv, slot) = IGC_MA_HEAD (xv);
+-  IGC_MA_PREV (xv, slot) = make_fixnum (-1);
+-  IGC_MA_HEAD (xv) = make_fixnum (slot);
+-  ptrdiff_t next = XFIXNUM (IGC_MA_NEXT (xv, slot));
+-  if (next >= 0)
+-    IGC_MA_PREV (xv, next) = make_fixnum (slot);
+-  m->slot = slot;
+-  m->buffer = b;
+-}
+-
+-void
+-igc_remove_marker (struct buffer *b, struct Lisp_Marker *m)
+-{
+-  Lisp_Object v = BUF_MARKERS (b);
+-  igc_assert (VECTORP (v));
+-  struct Lisp_Vector *xv = XVECTOR (v);
+-  igc_assert (m->slot >= 0 && m->slot < IGC_MA_CAPACITY (xv));
+-  igc_assert (MARKERP (IGC_MA_MARKER (xv, m->slot))
+-	      && XMARKER (IGC_MA_MARKER (xv, m->slot)) == m);
+-  unchain (xv, m->slot);
+-  m->slot = -1;
+-  m->buffer = NULL;
+-}
+-
+-void
+-igc_remove_all_markers (struct buffer *b)
+-{
+-  Lisp_Object v = BUF_MARKERS (b);
+-  if (VECTORP (v))
+-    {
+-      struct Lisp_Vector *xv = XVECTOR (v);
+-      for (ptrdiff_t slot = 0; slot < IGC_MA_CAPACITY (xv); ++slot)
+-	if (MARKERP (IGC_MA_MARKER (xv, slot)))
+-	  XMARKER (IGC_MA_MARKER (xv, slot))->buffer = NULL;
+-      BUF_MARKERS (b) = Qnil;
+-    }
+-}
+-
+ static bool
+ weak_vector_p (Lisp_Object x)
+ {
+@@ -4989,7 +4888,7 @@ igc_resurrect_markers (struct buffer *b)
+     return;
+   igc_assert (!weak_vector_p (old));
+   size_t len = ASIZE (old);
+-  Lisp_Object new = alloc_marker_vector (len, Qnil);
++  Lisp_Object new = alloc_marker_vector (len);
+   memcpy (XVECTOR (new)->contents, XVECTOR (old)->contents,
+ 	  len * sizeof (Lisp_Object));
+   BUF_MARKERS (b) = new;
+diff --git a/src/igc.h b/src/igc.h
+index 131613b5044..c30bb2ae6d7 100644
+--- a/src/igc.h
++++ b/src/igc.h
+@@ -74,9 +74,6 @@ #define EMACS_IGC_H
+ 
+ void igc_process_messages (void);
+ Lisp_Object igc_make_cons (Lisp_Object car, Lisp_Object cdr);
+-void igc_add_marker (struct buffer *b, struct Lisp_Marker *m);
+-void igc_remove_marker (struct buffer *b, struct Lisp_Marker *m);
+-void igc_remove_all_markers (struct buffer *b);
+ void igc_resurrect_markers (struct buffer *b);
+ Lisp_Object igc_alloc_symbol (void);
+ #ifdef HAVE_MODULES
+@@ -84,6 +81,7 @@ #define EMACS_IGC_H
+ void igc_free_global_ref (struct module_global_reference *ref);
+ #endif
+ 
++Lisp_Object igc_alloc_marker_vector (ptrdiff_t len, Lisp_Object init);
+ struct Lisp_Buffer_Local_Value *igc_alloc_blv (void);
+ void *igc_alloc_handler (void);
+ void *igc_xzalloc_ambig (size_t size);
+diff --git a/src/indent.c b/src/indent.c
+index 95228b26825..19afdd158a0 100644
+--- a/src/indent.c
++++ b/src/indent.c
+@@ -539,7 +539,7 @@ check_display_width (Lisp_Object window,
+ 			     make_fixnum (marker_byte_position (w->pointm)));
+ 		  record_unwind_protect (restore_window_buffer, oldbuf);
+ 		  wset_buffer (w, Fcurrent_buffer ());
+-		  set_marker_both (w->pointm, w->contents, pos, pos_byte);
++		  set_marker_both (w->pointm, w->contents, pos);
+ 		}
+ 
+ 	      struct text_pos startpos;
+@@ -2196,8 +2196,7 @@ restore_window_buffer (Lisp_Object list)
+   wset_buffer (w, XCAR (list));
+   list = XCDR (list);
+   set_marker_both (w->pointm, w->contents,
+-		   XFIXNAT (XCAR (list)),
+-		   XFIXNAT (XCAR (XCDR (list))));
++		   XFIXNAT (XCAR (list)));
+ }
+ 
+ DEFUN ("vertical-motion", Fvertical_motion, Svertical_motion, 1, 3, 0,
+@@ -2274,7 +2273,7 @@ line (if such column exists on that line, that is).  If the line is
+       record_unwind_protect (restore_window_buffer, old);
+       wset_buffer (w, Fcurrent_buffer ());
+       set_marker_both (w->pointm, w->contents,
+-		       BUF_PT (current_buffer), BUF_PT_BYTE (current_buffer));
++		       BUF_PT (current_buffer));
+     }
+ 
+   if (noninteractive)
+diff --git a/src/insdel.c b/src/insdel.c
+index 1031ad2140e..bcd88db6032 100644
+--- a/src/insdel.c
++++ b/src/insdel.c
+@@ -27,6 +27,8 @@
+ #include "intervals.h"
+ #include "character.h"
+ #include "buffer.h"
++#include "marker-vector.h"
++#include "text-index.h"
+ #include "window.h"
+ #include "region-cache.h"
+ #include "pdumper.h"
+@@ -229,15 +231,14 @@ adjust_suspend_auto_hscroll (ptrdiff_t from, ptrdiff_t to)
+     {
+       struct window *w = XWINDOW (selected_window);
+ 
+-      if (BUFFERP (w->contents)
+-	  && XBUFFER (w->contents) == current_buffer
+-	  && XMARKER (w->old_pointm)->charpos >= from
+-	  && XMARKER (w->old_pointm)->charpos <= to)
++      ptrdiff_t charpos;
++      if (BUFFERP (w->contents) && XBUFFER (w->contents) == current_buffer
++	  && (charpos = marker_vector_charpos (XMARKER (w->old_pointm)),
++	      charpos >= from && charpos <= to))
+ 	w->suspend_auto_hscroll = 0;
+     }
+ }
+ 
+-
+ /* Adjust all markers for a deletion
+    whose range in bytes is FROM_BYTE to TO_BYTE.
+    The range in charpos is FROM to TO.
+@@ -249,29 +250,9 @@ adjust_suspend_auto_hscroll (ptrdiff_t from, ptrdiff_t to)
+ adjust_markers_for_delete (ptrdiff_t from, ptrdiff_t from_byte,
+ 			   ptrdiff_t to, ptrdiff_t to_byte)
+ {
+-  ptrdiff_t charpos;
+-
++  text_index_invalidate (current_buffer, from_byte);
+   adjust_suspend_auto_hscroll (from, to);
+-  DO_MARKERS (current_buffer, m)
+-    {
+-      charpos = m->charpos;
+-      eassert (charpos <= Z);
+-
+-      /* If the marker is after the deletion,
+-	 relocate by number of chars / bytes deleted.  */
+-      if (charpos > to)
+-	{
+-	  m->charpos -= to - from;
+-	  m->bytepos -= to_byte - from_byte;
+-	}
+-      /* Here's the case where a marker is inside text being deleted.  */
+-      else if (charpos > from)
+-	{
+-	  m->charpos = from;
+-	  m->bytepos = from_byte;
+-	}
+-    }
+-  END_DO_MARKERS;
++  marker_vector_adjust_for_replace (current_buffer, from, to - from, 0);
+   adjust_overlays_for_delete (from, to - from);
+ }
+ 
+@@ -288,30 +269,9 @@ adjust_markers_for_delete (ptrdiff_t from, ptrdiff_t from_byte,
+ adjust_markers_for_insert (ptrdiff_t from, ptrdiff_t from_byte,
+ 			   ptrdiff_t to, ptrdiff_t to_byte, bool before_markers)
+ {
+-  ptrdiff_t nchars = to - from;
+-  ptrdiff_t nbytes = to_byte - from_byte;
+-
++  text_index_invalidate (current_buffer, from_byte);
+   adjust_suspend_auto_hscroll (from, to);
+-  DO_MARKERS (current_buffer, m)
+-    {
+-      eassert (m->bytepos >= m->charpos
+-	       && m->bytepos - m->charpos <= Z_BYTE - Z);
+-
+-      if (m->bytepos == from_byte)
+-	{
+-	  if (m->insertion_type || before_markers)
+-	    {
+-	      m->bytepos = to_byte;
+-	      m->charpos = to;
+-	    }
+-	}
+-      else if (m->bytepos > from_byte)
+-	{
+-	  m->bytepos += nbytes;
+-	  m->charpos += nchars;
+-	}
+-    }
+-  END_DO_MARKERS;
++  marker_vector_adjust_for_insert (current_buffer, from, to, before_markers);
+   adjust_overlays_for_insert (from, to - from, before_markers);
+ }
+ 
+@@ -343,10 +303,6 @@ adjust_markers_for_replace (ptrdiff_t from, ptrdiff_t from_byte,
+ 			    ptrdiff_t old_chars, ptrdiff_t old_bytes,
+ 			    ptrdiff_t new_chars, ptrdiff_t new_bytes)
+ {
+-  ptrdiff_t prev_to_byte = from_byte + old_bytes;
+-  ptrdiff_t diff_chars = new_chars - old_chars;
+-  ptrdiff_t diff_bytes = new_bytes - old_bytes;
+-
+   if (old_chars == 0)
+     {
+       /* Just an insertion: markers at FROM may need to move or not depending
+@@ -359,47 +315,14 @@ adjust_markers_for_replace (ptrdiff_t from, ptrdiff_t from_byte,
+       return;
+     }
+ 
++  text_index_invalidate (current_buffer, from_byte);
+   adjust_suspend_auto_hscroll (from, from + old_chars);
+-
+-  DO_MARKERS (current_buffer, m)
+-    {
+-      if (m->bytepos >= prev_to_byte)
+-	{
+-	  m->charpos += diff_chars;
+-	  m->bytepos += diff_bytes;
+-	}
+-      else if (m->bytepos > from_byte)
+-	{
+-	  m->charpos = from;
+-	  m->bytepos = from_byte;
+-	}
+-    }
+-  END_DO_MARKERS;
+-
++  marker_vector_adjust_for_replace (current_buffer, from, old_chars, new_chars);
+   check_markers ();
+-
+   adjust_overlays_for_insert (from + old_chars, new_chars, true);
+   adjust_overlays_for_delete (from, old_chars);
+ }
+ 
+-/* Starting at POS (BYTEPOS), find the byte position corresponding to
+-   ENDPOS, which could be either before or after POS.  */
+-static ptrdiff_t
+-count_bytes (ptrdiff_t pos, ptrdiff_t bytepos, ptrdiff_t endpos)
+-{
+-  eassert (BEG_BYTE <= bytepos && bytepos <= Z_BYTE
+-	   && BEG <= endpos && endpos <= Z);
+-
+-  if (pos <= endpos)
+-    for ( ; pos < endpos; pos++)
+-      bytepos += next_char_len (bytepos);
+-  else
+-    for ( ; pos > endpos; pos--)
+-      bytepos -= prev_char_len (bytepos);
+-
+-  return bytepos;
+-}
+-
+ /* Adjust byte positions of markers when their character positions
+    didn't change.  This is used in several places that replace text,
+    but keep the character positions of the markers unchanged -- the
+@@ -413,46 +336,7 @@ count_bytes (ptrdiff_t pos, ptrdiff_t bytepos, ptrdiff_t endpos)
+ adjust_markers_bytepos (ptrdiff_t from, ptrdiff_t from_byte,
+ 			ptrdiff_t to, ptrdiff_t to_byte, int to_z)
+ {
+-  ptrdiff_t beg = from, begbyte = from_byte;
+-
+   adjust_suspend_auto_hscroll (from, to);
+-
+-  if (Z == Z_BYTE || (!to_z && to == to_byte))
+-    {
+-      /* Make sure each affected marker's bytepos is equal to
+-	 its charpos.  */
+-      DO_MARKERS (current_buffer, m)
+-	{
+-	  if (m->bytepos > from_byte
+-	      && (to_z || m->bytepos <= to_byte))
+-	    m->bytepos = m->charpos;
+-	}
+-      END_DO_MARKERS;
+-    }
+-  else
+-    {
+-      DO_MARKERS (current_buffer, m)
+-	{
+-	  /* Recompute each affected marker's bytepos.  */
+-	  if (m->bytepos > from_byte
+-	      && (to_z || m->bytepos <= to_byte))
+-	    {
+-	      if (m->charpos < beg
+-		  && beg - m->charpos > m->charpos - from)
+-		{
+-		  beg = from;
+-		  begbyte = from_byte;
+-		}
+-	      m->bytepos = count_bytes (beg, begbyte, m->charpos);
+-	      beg = m->charpos;
+-	      begbyte = m->bytepos;
+-	    }
+-	}
+-      END_DO_MARKERS;
+-    }
+-
+-  /* Make sure cached charpos/bytepos is invalid.  */
+-  clear_charpos_cache (current_buffer);
+ }
+ 
+ 
+diff --git a/src/lisp.h b/src/lisp.h
+index 21f1b3eb3dc..ad25353f0b4 100644
+--- a/src/lisp.h
++++ b/src/lisp.h
+@@ -1840,11 +1840,17 @@ ASIZE (Lisp_Object array)
+   return size;
+ }
+ 
++INLINE ptrdiff_t
++gc_vsize (const struct Lisp_Vector *v)
++{
++  return v->header.size & ~ARRAY_MARK_FLAG;
++}
++
+ INLINE ptrdiff_t
+ gc_asize (Lisp_Object array)
+ {
+   /* Like ASIZE, but also can be used in the garbage collector.  */
+-  return XVECTOR (array)->header.size & ~ARRAY_MARK_FLAG;
++  return gc_vsize (XVECTOR (array));
+ }
+ 
+ INLINE ptrdiff_t
+@@ -3089,23 +3095,10 @@ knuth_hash (hash_hash_t hash, unsigned bits)
+   /* The remaining fields are meaningless in a marker that
+      does not point anywhere.  */
+ 
+-#ifndef HAVE_MPS
+-  /* For markers that point somewhere,
+-     this is used to chain of all the markers in a given buffer.
+-     The chain does not preserve markers from garbage collection;
+-     instead, markers are removed from the chain when freed by GC.  */
+-  /* We could remove it and use an array in buffer_text instead.
+-     That would also allow us to preserve it ordered.  */
+-  struct Lisp_Marker *next;
+-  /* This is the char position where the marker points.  */
+-#endif
+-
+-  ptrdiff_t charpos;
+-  /* This is the byte position.
+-     It's mostly used as a charpos<->bytepos cache (i.e. it's not directly
+-     used to implement the functionality of markers, but rather to (ab)use
+-     markers as a cache for char<->byte mappings).  */
+-  ptrdiff_t bytepos;
++  /* If in a buffer's marker vector, this is the entry where it is
++     stored.  If not in the marker vector, this is minus its last
++     character position. */
++  ptrdiff_t entry;
+ 
+ # ifdef HAVE_MPS
+   /* If in a buffer's marker vector, this is the index where it is
+@@ -5354,16 +5347,13 @@ XMODULE_FUNCTION (Lisp_Object o)
+ 
+ extern ptrdiff_t marker_position (Lisp_Object);
+ extern ptrdiff_t marker_byte_position (Lisp_Object);
+-extern void clear_charpos_cache (struct buffer *);
+-extern ptrdiff_t buf_charpos_to_bytepos (struct buffer *, ptrdiff_t);
+-extern ptrdiff_t buf_bytepos_to_charpos (struct buffer *, ptrdiff_t);
+ extern void detach_marker (Lisp_Object);
+ extern void unchain_marker (struct Lisp_Marker *);
+ extern Lisp_Object set_marker_restricted (Lisp_Object, Lisp_Object, Lisp_Object);
+-extern Lisp_Object set_marker_both (Lisp_Object, Lisp_Object, ptrdiff_t, ptrdiff_t);
++extern Lisp_Object set_marker_both (Lisp_Object, Lisp_Object, ptrdiff_t);
+ extern Lisp_Object set_marker_restricted_both (Lisp_Object, Lisp_Object,
+-                                               ptrdiff_t, ptrdiff_t);
+-extern Lisp_Object build_marker (struct buffer *, ptrdiff_t, ptrdiff_t);
++                                               ptrdiff_t);
++extern Lisp_Object build_marker (struct buffer *, ptrdiff_t);
+ extern void syms_of_marker (void);
+ 
+ /* Defined in fileio.c.  */
+diff --git a/src/lread.c b/src/lread.c
+index 1df101e1720..a6402c00168 100644
+--- a/src/lread.c
++++ b/src/lread.c
+@@ -394,8 +394,8 @@ source_marker_get (source_t *src)
+ 	c = BYTE8_TO_CHAR (c);
+       bytepos++;
+     }
+-  XMARKER (m)->bytepos = bytepos;
+-  XMARKER (m)->charpos++;
++  const ptrdiff_t charpos = marker_vector_charpos (XMARKER (m));
++  marker_vector_set_charpos (XMARKER (m), charpos + 1);
+   return c;
+ }
+ 
+@@ -403,11 +403,8 @@ source_marker_get (source_t *src)
+ source_marker_unget (source_t *src, int c)
+ {
+   Lisp_Object m = src->object;
+-  struct buffer *b = XMARKER (m)->buffer;
+-  ptrdiff_t bytepos = XMARKER (m)->bytepos;
+-  XMARKER (m)->charpos--;
+-  bytepos -= src->multibyte ? buf_prev_char_len (b, bytepos) : 1;
+-  XMARKER (m)->bytepos = bytepos;
++  const ptrdiff_t charpos = marker_vector_charpos (XMARKER (m));
++  marker_vector_set_charpos (XMARKER (m), charpos - 1);
+ }
+ 
+ static int
+diff --git a/src/marker-vector.c b/src/marker-vector.c
+new file mode 100644
+index 00000000000..904b44be50d
+--- /dev/null
++++ b/src/marker-vector.c
+@@ -0,0 +1,378 @@
++/* Marker vectors.
++   Copyright (C) 2025 Free Software Foundation, Inc.
++
++This file is part of GNU Emacs.
++
++GNU Emacs is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or (at
++your option) any later version.
++
++GNU Emacs is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
++
++/* A marker vector is used to hold the markers of a buffer.  The vector
++   is a normal Lisp vector that consists of a header and a number of
++   entries for each marker.  A Lisp vector is used because the vector
++   references markers "weakly", and that's what easy for igc.
++
++   +------+-----------+---------+---------+--------------+
++   | FREE | MAX_ENTRY | entry 0 | entry 1 | ...          |
++   +------+-----------+---------+---------+--------------+
++   |<----- header --->|
++
++   Entries consist of 2 vector slots MARKER and CHARPOS. MARKER holds a
++   marker, if the entry is in use.  CHARPOS is not yet used.  (The idea is
++   to move the positions from Lisp_Marker here, which speeds up
++   adjusting positions when the text changes.)
++
++   FREE is the array index of the start of the next free entry in the
++   marker vector.  Free entries form a singly-linked list using the
++   MARKER field of entries.
++
++   MAX_ENTRY is the largest index ever used to store a marker.  This is
++   used to (supposedly) speed up iteration over the marker vector, with
++   the assumption that there might be a tail of slots in the marker
++   vector that is never used.  Or, IOW, that we over-allocate room in the
++   marker vector.
++
++   Lisp_Marker objects contain the index under which they are stored in
++   the marker vector.
++
++   The use of a free list gives O(1) for adding a marker.  The index
++   stored in the Lisp_Marker provides O(1) deletion of a marker from
++   the markers of a buffer.
++
++   Iteration over marker vectors is done by iterating over all slots of
++   the vector that can contain markers, skipping those that don't.
++
++   Iteration over markers is O(N) where N is the size of the marker
++   vector.  This could be improved to N being the number of live markers
++   by putting marker entries in a doubly-linked list.  The downside is
++   that iteration then might access the marker vector slots in an
++   unpredictable order, while the current method scans the vector
++   sequentially which should be fast.  */
++
++#include <config.h>
++#include "lisp.h"
++#include "buffer.h"
++#include "text-index.h"
++#include "marker-vector.h"
++#ifdef HAVE_MPS
++#include "igc.h"
++#endif
++
++/* Number of entries to allocate initially.  */
++#define MARKER_VECTOR_INITIAL_ENTRIES 20
++
++/* Access fields of an entry E of marker vector V as lvalues.  */
++#define MARKER(v, e) (v)->contents[(e) + MARKER_VECTOR_OFFSET_MARKER]
++#define CHARPOS(v, e) (v)->contents[(e) + MARKER_VECTOR_OFFSET_CHARPOS]
++
++/* Index of next free entry in the header of a marker vector.  This must
++   use the marker field so that putting an entry on the free list
++   implicitly sets the marker slot to a non-marker.  See
++   fix_marker_vector in igc.c.  */
++#define NEXT_FREE(v, e) MARKER (v, e)
++
++/* Value denoting end of the free list.  */
++#define FREE_LIST_END make_fixnum (0)
++#define IS_FREE_LIST_END(x) EQ ((x), FREE_LIST_END)
++
++/* Access header fields of marker vector V as lvalues.  */
++#define FREE(v) (v)->contents[MARKER_VECTOR_FREE]
++#define MAX_ENTRY(v) (v)->contents[MARKER_VECTOR_MAX_ENTRY]
++
++/* Check that index ENTRY is a valid entry start index in vector V.  */
++
++static void
++check_is_entry (const struct Lisp_Vector *v, ptrdiff_t entry)
++{
++  eassert (entry >= MARKER_VECTOR_HEADER_SIZE);
++  eassert (entry < gc_vsize (v));
++  eassert ((entry - MARKER_VECTOR_HEADER_SIZE) % MARKER_VECTOR_ENTRY_SIZE == 0);
++}
++
++/* Push entry ENTRY of V to its free-list. This must set MARKER to not
++   be a marker, which is done by using the MARKER field of entry
++   to form the free-list.  */
++
++static void
++push_free (struct Lisp_Vector *v, const ptrdiff_t entry)
++{
++  check_is_entry (v, entry);
++  NEXT_FREE (v, entry) = FREE (v);
++  FREE (v) = make_fixnum (entry);
++}
++
++/* Pop the next free entry from the free-list of V and return its entry
++   start index.  */
++
++static ptrdiff_t
++pop_free (struct Lisp_Vector *v)
++{
++  const ptrdiff_t free = XFIXNUM (FREE (v));
++  FREE (v) = NEXT_FREE (v, free);
++  check_is_entry (v, free);
++  return free;
++}
++
++/* Add a new entry for marker M to marker vector MV and return its entry
++   start index.  */
++
++static ptrdiff_t
++add_entry (Lisp_Object mv, struct Lisp_Marker *m)
++{
++  struct Lisp_Vector *v = XVECTOR (mv);
++  const ptrdiff_t entry = pop_free (v);
++  MARKER (v, entry) = make_lisp_ptr (m, Lisp_Vectorlike);
++  const ptrdiff_t max_entry = XFIXNUM (MAX_ENTRY (v));
++  MAX_ENTRY (v) = make_fixnum (max (entry, max_entry));
++  return entry;
++}
++
++/* Allocate a marker vector of length LEN.  */
++
++Lisp_Object
++alloc_marker_vector (ptrdiff_t len)
++{
++#ifdef HAVE_MPS
++  return igc_alloc_marker_vector (len, FREE_LIST_END);
++#else
++  return make_vector (len, FREE_LIST_END);
++#endif
++}
++
++/* Expensive pre- and post-condition checking. V is the marker vector to
++   check.  ALLOCATING true means we are called from allocation functions
++   where V may be different from the underlying buffer's marker
++   vector.  */
++
++static void
++check_marker_vector (struct Lisp_Vector *v, bool allocating)
++{
++#ifdef ENABLE_CHECKING
++  size_t nfree = 0;
++  for (Lisp_Object e = FREE (v); !IS_FREE_LIST_END (e);
++       e = NEXT_FREE (v, XFIXNUM (e)))
++    ++nfree;
++
++  size_t nused = 0;
++  Lisp_Object mv = make_lisp_ptr (v, Lisp_Vectorlike);
++  FOR_EACH_MARKER_OF_VECTOR (mv, m)
++    {
++      eassert (m->buffer != NULL);
++      if (!allocating)
++	{
++	  struct Lisp_Vector *mv = XVECTOR (BUF_MARKERS (m->buffer));
++	  eassert (mv == v);
++	}
++      ++nused;
++    }
++
++  eassert ((nused + nfree) * MARKER_VECTOR_ENTRY_SIZE
++	   + MARKER_VECTOR_HEADER_SIZE == gc_vsize (v));
++#endif
++}
++
++/* Add all entries of MV starting with FIRST to the end of marker vector MV
++   to its free list.  */
++
++static void
++add_to_free_list (Lisp_Object mv, ptrdiff_t first)
++{
++  struct Lisp_Vector *v = XVECTOR (mv);
++  for (ptrdiff_t e = ASIZE (mv) - MARKER_VECTOR_ENTRY_SIZE;
++       e >= first; e -= MARKER_VECTOR_ENTRY_SIZE)
++    push_free (v, e);
++}
++
++/* Make a new marker vector.  */
++
++Lisp_Object
++make_marker_vector (void)
++{
++  const ptrdiff_t len
++    = (MARKER_VECTOR_INITIAL_ENTRIES * MARKER_VECTOR_ENTRY_SIZE
++       + MARKER_VECTOR_HEADER_SIZE);
++  Lisp_Object mv = alloc_marker_vector (len);
++  add_to_free_list (mv, MARKER_VECTOR_HEADER_SIZE);
++  check_marker_vector (XVECTOR (mv), true);
++  return mv;
++}
++
++/* Return a new marker vector that is like OLD_MV but larger.  */
++
++static Lisp_Object
++larger_marker_vector (Lisp_Object old_mv)
++{
++  const ptrdiff_t old_size = ASIZE (old_mv);
++  const ptrdiff_t old_entries_size = old_size - MARKER_VECTOR_HEADER_SIZE;
++  const ptrdiff_t new_size = 2 * old_entries_size + MARKER_VECTOR_HEADER_SIZE;
++
++  /* Allocate a new marker vector.  */
++  Lisp_Object new_mv = alloc_marker_vector (new_size);
++  struct Lisp_Vector *new_v = XVECTOR (new_mv);
++
++  /* Copy existing entries. */
++  const struct Lisp_Vector *old_v = XVECTOR (old_mv);
++  const size_t nbytes = old_size * sizeof (Lisp_Object);
++  memcpy (new_v->contents, old_v->contents, nbytes);
++
++  /* Add new entries to free-list.  */
++  add_to_free_list (new_mv, old_size);
++  check_marker_vector (new_v, true);
++  return new_mv;
++}
++
++/* Make sure that the marker vector of buffer B has room for a new
++   entry.  Make a larger marker vector if not.  Value is the marker
++   vector of B at the end.  */
++
++static Lisp_Object
++ensure_room (struct buffer *b)
++{
++  Lisp_Object mv = BUF_MARKERS (b);
++  if (IS_FREE_LIST_END (FREE (XVECTOR (mv))))
++    {
++      mv = larger_marker_vector (mv);
++      BUF_MARKERS (b) = mv;
++    }
++  return mv;
++}
++
++/* Add marker M to the marker vector of buffer B.  */
++
++void
++marker_vector_add (struct buffer *b, struct Lisp_Marker *m)
++{
++  const Lisp_Object mv = ensure_room (b);
++  check_marker_vector (XVECTOR (mv), false);
++  m->buffer = b;
++  m->entry = add_entry (mv, m);
++  check_marker_vector (XVECTOR (mv), false);
++}
++
++/* Remove marker M from marker vector V.  */
++
++void
++marker_vector_remove (struct Lisp_Vector *v, struct Lisp_Marker *m)
++{
++  check_marker_vector (v, false);
++  check_is_entry (v, m->entry);
++  eassert (MARKERP (MARKER (v, m->entry)));
++  eassert (XMARKER (MARKER (v, m->entry)) == m);
++  push_free (v, m->entry);
++  m->buffer = NULL;
++  m->entry = - XFIXNUM (CHARPOS (v, m->entry));
++  check_marker_vector (v, false);
++}
++
++/* Reset markers of buffer B.  Called from kill-buffer.  */
++
++void
++marker_vector_reset (struct buffer *b)
++{
++  FOR_EACH_MARKER (b, m)
++    {
++      const struct Lisp_Vector *v = XVECTOR (BUF_MARKERS (m->buffer));
++      m->entry = - XFIXNUM (CHARPOS (v, m->entry));
++      m->buffer = NULL;
++    }
++  BUF_MARKERS (b) = Qnil;
++}
++
++/* Set marker M's character position to CHARPOS.  */
++
++void
++marker_vector_set_charpos (struct Lisp_Marker *m, ptrdiff_t charpos)
++{
++  eassert (m->buffer);
++  struct Lisp_Vector *v = XVECTOR (BUF_MARKERS (m->buffer));
++  check_is_entry (v, m->entry);
++  CHARPOS (v, m->entry) = make_fixnum (charpos);
++}
++
++/* Return marker M's character position.  */
++
++ptrdiff_t
++marker_vector_charpos (const struct Lisp_Marker *m)
++{
++  eassert (m->buffer);
++  struct Lisp_Vector *v = XVECTOR (BUF_MARKERS (m->buffer));
++  check_is_entry (v, m->entry);
++  return XFIXNUM (CHARPOS (v, m->entry));
++}
++
++/* Return marker M's last character position.  */
++
++ptrdiff_t
++marker_vector_last_charpos (const struct Lisp_Marker *m)
++{
++  eassert (m->buffer == NULL);
++  eassert (m->entry < 0);
++  return - m->entry;
++}
++
++/* Return marker M's byte position.  */
++
++ptrdiff_t
++marker_vector_bytepos (const struct Lisp_Marker *m)
++{
++  const ptrdiff_t charpos = marker_vector_charpos (m);
++  return buf_charpos_to_bytepos (m->buffer, charpos);
++}
++
++/* Adjust marker positions in buffer B for an insertion that stretches
++   from FROM_CHARPOS to TO_CHARPOS.  When a marker points at the
++   insertion point FROM_CHARPOS, we advance it if either its
++   insertion-type is t or BEFORE_MARKERS is true.  */
++
++void
++marker_vector_adjust_for_insert (struct buffer *b,
++				 const ptrdiff_t from_charpos,
++				 const ptrdiff_t to_charpos,
++				 const bool before_markers)
++{
++  const ptrdiff_t nchars = to_charpos - from_charpos;
++  struct Lisp_Vector *v = XVECTOR (BUF_MARKERS (b));
++  FOR_EACH_MARKER (b, m)
++    {
++      const ptrdiff_t charpos = XFIXNUM (CHARPOS (v, m->entry));
++      if (charpos == from_charpos)
++	{
++	  if (m->insertion_type || before_markers)
++	    CHARPOS (v, m->entry) = make_fixnum (to_charpos);
++	}
++      else if (charpos > from_charpos)
++	CHARPOS (v, m->entry) = make_fixnum (charpos + nchars);
++    }
++}
++
++/* Adjust marker positions of buffer Bs for a replacement of text at
++   FROM_CHARPOS of length OLD_NCHARS to a new text of length NEW_NCHARS.
++   It is assumed that OLD_CHARS > 0, i.e., this is not an insertion.  */
++
++void
++marker_vector_adjust_for_replace (struct buffer *b,
++				  const ptrdiff_t from_charpos,
++				  const ptrdiff_t old_nchars,
++				  const ptrdiff_t new_nchars)
++{
++  const ptrdiff_t diff_nchars = new_nchars - old_nchars;
++  const ptrdiff_t old_to_charpos = from_charpos + old_nchars;
++  struct Lisp_Vector *v = XVECTOR (BUF_MARKERS (b));
++  FOR_EACH_MARKER (b, m)
++    {
++      const ptrdiff_t charpos = XFIXNUM (CHARPOS (v, m->entry));
++      if (charpos >= old_to_charpos)
++	CHARPOS (v, m->entry) = make_fixnum (charpos + diff_nchars);
++      else if (charpos > from_charpos)
++	CHARPOS (v, m->entry) = make_fixnum (from_charpos);
++    }
++}
+diff --git a/src/marker-vector.h b/src/marker-vector.h
+new file mode 100644
+index 00000000000..6a0ee8a9507
+--- /dev/null
++++ b/src/marker-vector.h
+@@ -0,0 +1,106 @@
++/* Marker vectors.
++   Copyright (C) 2025 Free Software Foundation, Inc.
++
++This file is part of GNU Emacs.
++
++GNU Emacs is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or (at
++your option) any later version.
++
++GNU Emacs is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
++
++#ifndef EMACS_MARKER_VECTOR_H
++#define EMACS_MARKER_VECTOR_H
++
++#include <config.h>
++#include "lisp.h"
++
++/* A marker vector is a Lisp vector starting with a header of
++   MARKER_VECTOR_HEADER_SIZE Lisp_Objects, followed by entries of
++   MARKER_VECTOR_ENTRY_SIZE Lisp_Objects.  */
++
++enum
++{
++  /* Header.  */
++  MARKER_VECTOR_FREE = 0,
++  MARKER_VECTOR_MAX_ENTRY = 1,
++  MARKER_VECTOR_HEADER_SIZE = 2,
++
++  /* Entries.  */
++  MARKER_VECTOR_OFFSET_MARKER = 0,
++  MARKER_VECTOR_OFFSET_CHARPOS = 1,
++  MARKER_VECTOR_ENTRY_SIZE = 2,
++};
++
++struct for_each_marker_data
++{
++  ptrdiff_t e;
++  ptrdiff_t end;
++  Lisp_Object m;
++  Lisp_Object mv;
++  bool continued;
++  struct Lisp_Marker *marker;
++};
++
++INLINE struct for_each_marker_data
++build_for_each_marker_data(Lisp_Object mv)
++{
++  struct for_each_marker_data ret;
++  ret.e = MARKER_VECTOR_HEADER_SIZE;
++  ret.end = XFIXNUM (AREF (mv, MARKER_VECTOR_MAX_ENTRY));
++  ret.m = Qnil;
++  ret.mv = mv;
++  ret.marker = NULL;
++  ret.continued = true;
++  return ret;
++}
++
++INLINE bool
++next_marker_entry (struct for_each_marker_data *d)
++{
++  if (!d->continued)
++    return false;
++  while (d->e <= d->end)
++    {
++      d->m = AREF (d->mv, d->e + MARKER_VECTOR_OFFSET_MARKER);
++      d->e += MARKER_VECTOR_ENTRY_SIZE;
++      if (MARKERP (d->m))
++	{
++	  d->marker = XMARKER (d->m);
++	  d->continued = false;
++	  return true;
++	}
++    }
++  return false;
++}
++
++#define FOR_EACH_MARKER_OF_VECTOR(v, m)					\
++  for (struct for_each_marker_data d_ = build_for_each_marker_data (v); \
++       next_marker_entry (&d_);)					\
++    for (struct Lisp_Marker *m = d_.marker; !d_.continued; d_.continued = true)
++
++#define FOR_EACH_MARKER(b, m) \
++  FOR_EACH_MARKER_OF_VECTOR (BUF_MARKERS (b), m)
++
++Lisp_Object make_marker_vector (void);
++Lisp_Object alloc_marker_vector (ptrdiff_t len);
++void marker_vector_add (struct buffer *b, struct Lisp_Marker *m);
++void marker_vector_remove (struct Lisp_Vector *v, struct Lisp_Marker *m);
++void marker_vector_reset (struct buffer *b);
++void marker_vector_set_charpos (struct Lisp_Marker *m, ptrdiff_t charpos);
++ptrdiff_t marker_vector_charpos (const struct Lisp_Marker *m);
++ptrdiff_t marker_vector_bytepos (const struct Lisp_Marker *m);
++void marker_vector_adjust_for_insert (struct buffer *b, const ptrdiff_t from,
++				      ptrdiff_t to, bool before_markers);
++void marker_vector_adjust_for_replace (struct buffer *b, ptrdiff_t from,
++				       ptrdiff_t old_chars, ptrdiff_t new_chars);
++ptrdiff_t marker_vector_last_charpos (const struct Lisp_Marker *m);
++
++#endif /* EMACS_MARKER_VECTOR_H */
+diff --git a/src/marker.c b/src/marker.c
+index 12d53ad12b8..b604d9f03d8 100644
+--- a/src/marker.c
++++ b/src/marker.c
+@@ -28,17 +28,10 @@
+ #include "lisp.h"
+ #include "character.h"
+ #include "buffer.h"
++#include "text-index.h"
+ #include "window.h"
+ #include "igc.h"
+ 
+-/* Record one cached position found recently by
+-   buf_charpos_to_bytepos or buf_bytepos_to_charpos.  */
+-
+-static ptrdiff_t cached_charpos;
+-static ptrdiff_t cached_bytepos;
+-static struct buffer *cached_buffer;
+-static modiff_count cached_modiff;
+-
+ /* Juanma Barranquero <lekktu@gmail.com> reported ~3x increased
+    bootstrap time when byte_char_debug_check is enabled; so this
+    is never turned on by --enable-checking configure option.  */
+@@ -75,370 +68,17 @@ byte_char_debug_check (struct buffer *b, ptrdiff_t charpos, ptrdiff_t bytepos)
+ #define byte_char_debug_check(b, charpos, bytepos) do { } while (0)
+ 
+ #endif /* MARKER_DEBUG */
+-
+-void
+-clear_charpos_cache (struct buffer *b)
+-{
+-  if (cached_buffer == b)
+-    cached_buffer = 0;
+-}
+ 
+ /* Converting between character positions and byte positions.  */
+ 
+-/* There are several places in the buffer where we know
+-   the correspondence: BEG, BEGV, PT, GPT, ZV and Z,
+-   and everywhere there is a marker.  So we find the one of these places
+-   that is closest to the specified position, and scan from there.  */
+-
+-/* This macro is a subroutine of buf_charpos_to_bytepos.
+-   Note that it is desirable that BYTEPOS is not evaluated
+-   except when we really want its value.  */
+-
+-#define CONSIDER(CHARPOS, BYTEPOS)					\
+-{									\
+-  ptrdiff_t this_charpos = (CHARPOS);					\
+-  bool changed = false;							\
+-									\
+-  if (this_charpos == charpos)						\
+-    {									\
+-      ptrdiff_t value = (BYTEPOS);				       	\
+-									\
+-      byte_char_debug_check (b, charpos, value);			\
+-      return value;							\
+-    }									\
+-  else if (this_charpos > charpos)					\
+-    {									\
+-      if (this_charpos < best_above)					\
+-	{								\
+-	  best_above = this_charpos;					\
+-	  best_above_byte = (BYTEPOS);					\
+-	  changed = true;						\
+-	}								\
+-    }									\
+-  else if (this_charpos > best_below)					\
+-    {									\
+-      best_below = this_charpos;					\
+-      best_below_byte = (BYTEPOS);					\
+-      changed = true;							\
+-    }									\
+-									\
+-  if (changed)								\
+-    {									\
+-      if (best_above - best_below == best_above_byte - best_below_byte)	\
+-        {								\
+-	  ptrdiff_t value = best_below_byte + (charpos - best_below);	\
+-									\
+-	  byte_char_debug_check (b, charpos, value);			\
+-	  return value;							\
+-	}								\
+-    }									\
+-}
+-
+ static void
+ CHECK_MARKER (Lisp_Object x)
+ {
+   CHECK_TYPE (MARKERP (x), Qmarkerp, x);
+ }
+ 
+-/* When converting bytes from/to chars, we look through the list of
+-   markers to try and find a good starting point (since markers keep
+-   track of both bytepos and charpos at the same time).
+-   But if there are many markers, it can take too much time to find a "good"
+-   marker from which to start.  Worse yet: if it takes a long time and we end
+-   up finding a nearby markers, we won't add a new marker to cache this
+-   result, so next time around we'll have to go through this same long list
+-   to (re)find this best marker.  So the further down the list of
+-   markers we go, the less demanding we are w.r.t what is a good marker.
+-
+-   The previous code used INITIAL=50 and INCREMENT=0 and this lead to
+-   really poor performance when there are many markers.
+-   I haven't tried to tweak INITIAL, but experiments on my trusty Thinkpad
+-   T61 using various artificial test cases seem to suggest that INCREMENT=50
+-   might be "the best compromise": it significantly improved the
+-   worst case and it was rarely slower and never by much.
+-
+-   The asymptotic behavior is still poor, tho, so in largish buffers with many
+-   overlays (e.g. 300KB and 30K overlays), it can still be a bottleneck.  */
+-#define BYTECHAR_DISTANCE_INITIAL 50
+-#define BYTECHAR_DISTANCE_INCREMENT 50
+-
+-/* Return the byte position corresponding to CHARPOS in B.  */
+-
+-ptrdiff_t
+-buf_charpos_to_bytepos (struct buffer *b, ptrdiff_t charpos)
+-{
+-  ptrdiff_t best_above, best_above_byte;
+-  ptrdiff_t best_below, best_below_byte;
+-  ptrdiff_t distance = BYTECHAR_DISTANCE_INITIAL;
+-
+-  eassert (BUF_BEG (b) <= charpos && charpos <= BUF_Z (b));
+-
+-  best_above = BUF_Z (b);
+-  best_above_byte = BUF_Z_BYTE (b);
+-
+-  /* If this buffer has as many characters as bytes,
+-     each character must be one byte.
+-     This takes care of the case where enable-multibyte-characters is nil.  */
+-  if (best_above == best_above_byte)
+-    return charpos;
+-
+-  best_below = BEG;
+-  best_below_byte = BEG_BYTE;
+-
+-  /* We find in best_above and best_above_byte
+-     the closest known point above CHARPOS,
+-     and in best_below and best_below_byte
+-     the closest known point below CHARPOS,
+-
+-     If at any point we can tell that the space between those
+-     two best approximations is all single-byte,
+-     we interpolate the result immediately.  */
+-
+-  CONSIDER (BUF_PT (b), BUF_PT_BYTE (b));
+-  CONSIDER (BUF_GPT (b), BUF_GPT_BYTE (b));
+-  CONSIDER (BUF_BEGV (b), BUF_BEGV_BYTE (b));
+-  CONSIDER (BUF_ZV (b), BUF_ZV_BYTE (b));
+-
+-  if (b == cached_buffer && BUF_MODIFF (b) == cached_modiff)
+-    CONSIDER (cached_charpos, cached_bytepos);
+-
+-  DO_MARKERS (b, tail)
+-    {
+-      /* If we are down to a range of DISTANCE chars,
+-	 don't bother checking any other markers;
+-	 scan the intervening chars directly now.  */
+-      if (best_above - charpos < distance
+-          || charpos - best_below < distance)
+-	break;
+-
+-      CONSIDER (tail->charpos, tail->bytepos);
+-      distance += BYTECHAR_DISTANCE_INCREMENT;
+-    }
+-  END_DO_MARKERS;
+-
+-  /* We get here if we did not exactly hit one of the known places.
+-     We have one known above and one known below.
+-     Scan, counting characters, from whichever one is closer.  */
+-
+-  eassert (best_below <= charpos && charpos <= best_above);
+-  if (charpos - best_below < best_above - charpos)
+-    {
+-      bool record = charpos - best_below > 5000;
+-
+-      while (best_below < charpos)
+-	{
+-	  best_below++;
+-	  best_below_byte += buf_next_char_len (b, best_below_byte);
+-	}
+-
+-      /* If this position is quite far from the nearest known position,
+-	 cache the correspondence by creating a marker here.
+-	 It will last until the next GC.  */
+-      if (record)
+-	build_marker (b, best_below, best_below_byte);
+-
+-      byte_char_debug_check (b, best_below, best_below_byte);
+-
+-      cached_buffer = b;
+-      cached_modiff = BUF_MODIFF (b);
+-      cached_charpos = best_below;
+-      cached_bytepos = best_below_byte;
+-
+-      return best_below_byte;
+-    }
+-  else
+-    {
+-      bool record = best_above - charpos > 5000;
+-
+-      while (best_above > charpos)
+-	{
+-	  best_above--;
+-	  best_above_byte -= buf_prev_char_len (b, best_above_byte);
+-	}
+-
+-      /* If this position is quite far from the nearest known position,
+-	 cache the correspondence by creating a marker here.
+-	 It will last until the next GC.  */
+-      if (record)
+-	build_marker (b, best_above, best_above_byte);
+-
+-      byte_char_debug_check (b, best_above, best_above_byte);
+-
+-      cached_buffer = b;
+-      cached_modiff = BUF_MODIFF (b);
+-      cached_charpos = best_above;
+-      cached_bytepos = best_above_byte;
+-
+-      return best_above_byte;
+-    }
+-}
+-
+-#undef CONSIDER
+-
+-/* This macro is a subroutine of buf_bytepos_to_charpos.
+-   It is used when BYTEPOS is actually the byte position.  */
+-
+-#define CONSIDER(BYTEPOS, CHARPOS)					\
+-{									\
+-  ptrdiff_t this_bytepos = (BYTEPOS);					\
+-  int changed = false;							\
+-									\
+-  if (this_bytepos == bytepos)						\
+-    {									\
+-      ptrdiff_t value = (CHARPOS);				       	\
+-									\
+-      byte_char_debug_check (b, value, bytepos);			\
+-      return value;							\
+-    }									\
+-  else if (this_bytepos > bytepos)					\
+-    {									\
+-      if (this_bytepos < best_above_byte)				\
+-	{								\
+-	  best_above = (CHARPOS);					\
+-	  best_above_byte = this_bytepos;				\
+-	  changed = true;						\
+-	}								\
+-    }									\
+-  else if (this_bytepos > best_below_byte)				\
+-    {									\
+-      best_below = (CHARPOS);						\
+-      best_below_byte = this_bytepos;					\
+-      changed = true;							\
+-    }									\
+-									\
+-  if (changed)								\
+-    {									\
+-      if (best_above - best_below == best_above_byte - best_below_byte)	\
+-	{								\
+-	  ptrdiff_t value = best_below + (bytepos - best_below_byte);	\
+-									\
+-	  byte_char_debug_check (b, value, bytepos);			\
+-	  return value;							\
+-	}								\
+-    }									\
+-}
+-
+-/* Return the character position corresponding to BYTEPOS in B.  */
+-
+-ptrdiff_t
+-buf_bytepos_to_charpos (struct buffer *b, ptrdiff_t bytepos)
+-{
+-  ptrdiff_t best_above, best_above_byte;
+-  ptrdiff_t best_below, best_below_byte;
+-  ptrdiff_t distance = BYTECHAR_DISTANCE_INITIAL;
+-
+-  eassert (BUF_BEG_BYTE (b) <= bytepos && bytepos <= BUF_Z_BYTE (b));
+-
+-  best_above = BUF_Z (b);
+-  best_above_byte = BUF_Z_BYTE (b);
+-
+-  /* If this buffer has as many characters as bytes,
+-     each character must be one byte.
+-     This takes care of the case where enable-multibyte-characters is nil.  */
+-  if (best_above == best_above_byte)
+-    return bytepos;
+-
+-  /* Check bytepos is not in the middle of a character. */
+-  eassert (bytepos >= BUF_Z_BYTE (b)
+-           || CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)));
+-
+-  best_below = BEG;
+-  best_below_byte = BEG_BYTE;
+-
+-  CONSIDER (BUF_PT_BYTE (b), BUF_PT (b));
+-  CONSIDER (BUF_GPT_BYTE (b), BUF_GPT (b));
+-  CONSIDER (BUF_BEGV_BYTE (b), BUF_BEGV (b));
+-  CONSIDER (BUF_ZV_BYTE (b), BUF_ZV (b));
+-
+-  if (b == cached_buffer && BUF_MODIFF (b) == cached_modiff)
+-    CONSIDER (cached_bytepos, cached_charpos);
+-
+-  DO_MARKERS (b, tail)
+-    {
+-      /* If we are down to a range of DISTANCE chars,
+-	 don't bother checking any other markers;
+-	 scan the intervening chars directly now.  */
+-      if (best_above_byte - bytepos < distance
+-          || bytepos - best_below_byte < distance)
+-	break;
+-
+-      CONSIDER (tail->bytepos, tail->charpos);
+-      distance += BYTECHAR_DISTANCE_INCREMENT;
+-    }
+-  END_DO_MARKERS;
+-
+-  /* We get here if we did not exactly hit one of the known places.
+-     We have one known above and one known below.
+-     Scan, counting characters, from whichever one is closer.  */
+-
+-  if (bytepos - best_below_byte < best_above_byte - bytepos)
+-    {
+-      bool record = bytepos - best_below_byte > 5000;
+-
+-      while (best_below_byte < bytepos)
+-	{
+-	  best_below++;
+-	  best_below_byte += buf_next_char_len (b, best_below_byte);
+-	}
+-
+-      /* If this position is quite far from the nearest known position,
+-	 cache the correspondence by creating a marker here.
+-	 It will last until the next GC.
+-	 But don't do it if BUF_MARKERS is nil;
+-	 that is a signal from Fset_buffer_multibyte.  */
+-#ifdef HAVE_MPS
+-      if (record && !NILP (BUF_MARKERS (b)))
+-	build_marker (b, best_below, best_below_byte);
+-#else
+-      if (record && BUF_MARKERS (b))
+-	build_marker (b, best_below, best_below_byte);
+-#endif
+-
+-      byte_char_debug_check (b, best_below, best_below_byte);
+-
+-      cached_buffer = b;
+-      cached_modiff = BUF_MODIFF (b);
+-      cached_charpos = best_below;
+-      cached_bytepos = best_below_byte;
+-
+-      return best_below;
+-    }
+-  else
+-    {
+-      bool record = best_above_byte - bytepos > 5000;
+-
+-      while (best_above_byte > bytepos)
+-	{
+-	  best_above--;
+-	  best_above_byte -= buf_prev_char_len (b, best_above_byte);
+-	}
+-
+-      /* If this position is quite far from the nearest known position,
+-	 cache the correspondence by creating a marker here.
+-	 It will last until the next GC.
+-	 But don't do it if BUF_MARKERS is nil;
+-	 that is a signal from Fset_buffer_multibyte.  */
+-#ifdef HAVE_MPS
+-      if (record && VECTORP (BUF_MARKERS (b)))
+-	build_marker (b, best_above, best_above_byte);
+-#else
+-      if (record && BUF_MARKERS (b))
+-	build_marker (b, best_above, best_above_byte);
+-#endif
+-      byte_char_debug_check (b, best_above, best_above_byte);
+-
+-      cached_buffer = b;
+-      cached_modiff = BUF_MODIFF (b);
+-      cached_charpos = best_above;
+-      cached_bytepos = best_above_byte;
+-
+-      return best_above;
+-    }
+-}
+-
+-#undef CONSIDER
+ 
+-/* Operations on markers. */
++/* Operations on markers.  */
+ 
+ DEFUN ("marker-buffer", Fmarker_buffer, Smarker_buffer, 1, 1, 0,
+        doc: /* Return the buffer that MARKER points into, or nil if none.
+@@ -466,7 +106,7 @@ DEFUN ("marker-position", Fmarker_position, Smarker_position, 1, 1, 0,
+ {
+   CHECK_MARKER (marker);
+   if (XMARKER (marker)->buffer)
+-    return make_fixnum (XMARKER (marker)->charpos);
++    return make_fixnum (marker_vector_charpos (XMARKER (marker)));
+ 
+   return Qnil;
+ }
+@@ -480,36 +120,23 @@ DEFUN ("marker-last-position", Fmarker_last_position, Smarker_last_position, 1,
+ {
+   CHECK_MARKER (marker);
+ 
+-  return make_fixnum (XMARKER (marker)->charpos);
++  return make_fixnum (marker_vector_last_charpos (XMARKER (marker)));
+ }
+ 
+ /* Change M so it points to B at CHARPOS and BYTEPOS.  */
+ 
+ static void
+ attach_marker (struct Lisp_Marker *m, struct buffer *b,
+-	       ptrdiff_t charpos, ptrdiff_t bytepos)
++	       ptrdiff_t charpos)
+ {
+-  /* In a single-byte buffer, two positions must be equal.
+-     Otherwise, every character is at least one byte.  */
+-  if (BUF_Z (b) == BUF_Z_BYTE (b))
+-    eassert (charpos == bytepos);
+-  else
+-    eassert (charpos <= bytepos);
+-
+-  m->charpos = charpos;
+-  m->bytepos = bytepos;
+-
+-  if (m->buffer != b)
++   if (m->buffer != b)
+     {
+       unchain_marker (m);
+-      m->buffer = b;
+-#ifdef HAVE_MPS
+-      igc_add_marker (b, m);
+-#else
+-      m->next = BUF_MARKERS (b);
+-      BUF_MARKERS (b) = m;
+-#endif
++      marker_vector_add (b, m);
+     }
++
++   eassert (m->buffer == b);
++   marker_vector_set_charpos (m, charpos);
+ }
+ 
+ /* If BUFFER is nil, return current buffer pointer.  Next, check
+@@ -548,13 +175,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+   else if (MARKERP (position) && b == XMARKER (position)->buffer
+ 	   && b == m->buffer)
+     {
+-      m->bytepos = XMARKER (position)->bytepos;
+-      m->charpos = XMARKER (position)->charpos;
++      const ptrdiff_t charpos = marker_vector_charpos (XMARKER (position));
++      marker_vector_set_charpos (m, charpos);
+     }
+ 
+   else
+     {
+-      register ptrdiff_t charpos, bytepos;
++      register ptrdiff_t charpos;
+ 
+       /* Do not use CHECK_FIXNUM_COERCE_MARKER because we
+ 	 don't want to call buf_charpos_to_bytepos if POSITION
+@@ -567,15 +194,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+ 	  if (cpos > PTRDIFF_MAX)
+ 	    cpos = PTRDIFF_MAX;
+ 	  charpos = cpos;
+-	  bytepos = -1;
+ #else
+-	  charpos = XFIXNUM (position), bytepos = -1;
++	  charpos = XFIXNUM (position);
+ #endif
+ 	}
+       else if (MARKERP (position))
+ 	{
+-	  charpos = XMARKER (position)->charpos;
+-	  bytepos = XMARKER (position)->bytepos;
++	  charpos = marker_vector_charpos (XMARKER (position));
+ 	}
+       else
+ 	wrong_type_argument (Qinteger_or_marker_p, position);
+@@ -583,18 +208,8 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+       charpos = clip_to_bounds
+ 	(restricted ? BUF_BEGV (b) : BUF_BEG (b), charpos,
+ 	 restricted ? BUF_ZV (b) : BUF_Z (b));
+-      /* Don't believe BYTEPOS if it comes from a different buffer,
+-	 since that buffer might have a very different correspondence
+-	 between character and byte positions.  */
+-      if (bytepos == -1
+-	  || !(MARKERP (position) && XMARKER (position)->buffer == b))
+-	bytepos = buf_charpos_to_bytepos (b, charpos);
+-      else
+-	bytepos = clip_to_bounds
+-	  (restricted ? BUF_BEGV_BYTE (b) : BUF_BEG_BYTE (b),
+-	   bytepos, restricted ? BUF_ZV_BYTE (b) : BUF_Z_BYTE (b));
+ 
+-      attach_marker (m, b, charpos, bytepos);
++      attach_marker (m, b, charpos);
+     }
+ 
+ #ifdef HAVE_TEXT_CONVERSION
+@@ -648,7 +263,7 @@ set_marker_restricted (Lisp_Object marker, Lisp_Object position,
+ 
+ Lisp_Object
+ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
+-		 ptrdiff_t charpos, ptrdiff_t bytepos)
++		 ptrdiff_t charpos)
+ {
+   register struct Lisp_Marker *m;
+   register struct buffer *b = live_buffer (buffer);
+@@ -657,7 +272,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
+   m = XMARKER (marker);
+ 
+   if (b)
+-    attach_marker (m, b, charpos, bytepos);
++    attach_marker (m, b, charpos);
+   else
+     unchain_marker (m);
+   return marker;
+@@ -667,7 +282,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
+ 
+ Lisp_Object
+ set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
+-			    ptrdiff_t charpos, ptrdiff_t bytepos)
++			    ptrdiff_t charpos)
+ {
+   register struct Lisp_Marker *m;
+   register struct buffer *b = live_buffer (buffer);
+@@ -677,10 +292,9 @@ set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
+ 
+   if (b)
+     {
+-      attach_marker
+-	(m, b,
+-	 clip_to_bounds (BUF_BEGV (b), charpos, BUF_ZV (b)),
+-	 clip_to_bounds (BUF_BEGV_BYTE (b), bytepos, BUF_ZV_BYTE (b)));
++      attach_marker (m, b,
++		     clip_to_bounds (BUF_BEGV (b),
++				     charpos, BUF_ZV (b)));
+     }
+   else
+     unchain_marker (m);
+@@ -701,44 +315,12 @@ detach_marker (Lisp_Object marker)
+    buffer NULL.  */
+ 
+ void
+-unchain_marker (register struct Lisp_Marker *marker)
++unchain_marker (struct Lisp_Marker *marker)
+ {
+-  register struct buffer *b = marker->buffer;
+-
+-  if (b)
++  if (marker->buffer)
+     {
+-#ifdef HAVE_MPS
+-      igc_remove_marker (b, marker);
+-#else
+-      register struct Lisp_Marker *tail, **prev;
+-
+-      /* No dead buffers here.  */
+-      eassert (BUFFER_LIVE_P (b));
+-
+-      marker->buffer = NULL;
+-      prev = &BUF_MARKERS (b);
+-
+-      for (tail = BUF_MARKERS (b); tail; prev = &tail->next, tail = *prev)
+-	if (marker == tail)
+-	  {
+-	    if (*prev == BUF_MARKERS (b))
+-	      {
+-		/* Deleting first marker from the buffer's chain.  Crash
+-		   if new first marker in chain does not say it belongs
+-		   to the same buffer, or at least that they have the same
+-		   base buffer.  */
+-		if (tail->next && b->text != tail->next->buffer->text)
+-		  emacs_abort ();
+-	      }
+-	    *prev = tail->next;
+-	    /* We have removed the marker from the chain;
+-	       no need to scan the rest of the chain.  */
+-	    break;
+-	  }
+-
+-      /* Error if marker was not in it's chain.  */
+-      eassert (tail != NULL);
+-#endif
++      Lisp_Object mv = BUF_MARKERS (marker->buffer);
++      marker_vector_remove (XVECTOR (mv), marker);
+     }
+ }
+ 
+@@ -753,9 +335,9 @@ marker_position (Lisp_Object marker)
+   if (!buf)
+     error ("Marker does not point anywhere");
+ 
+-  eassert (BUF_BEG (buf) <= m->charpos && m->charpos <= BUF_Z (buf));
+-
+-  return m->charpos;
++  const ptrdiff_t charpos = marker_vector_charpos (m);
++  eassert (BUF_BEG (buf) <= charpos && charpos <= BUF_Z (buf));
++  return charpos;
+ }
+ 
+ /* Return the byte position of marker MARKER, as a C integer.  */
+@@ -769,9 +351,9 @@ marker_byte_position (Lisp_Object marker)
+   if (!buf)
+     error ("Marker does not point anywhere");
+ 
+-  eassert (BUF_BEG_BYTE (buf) <= m->bytepos && m->bytepos <= BUF_Z_BYTE (buf));
+-
+-  return m->bytepos;
++  const ptrdiff_t bytepos = marker_vector_bytepos (m);
++  eassert (BUF_BEG_BYTE (buf) <= bytepos && bytepos <= BUF_Z_BYTE (buf));
++  return bytepos;
+ }
+ 
+ DEFUN ("copy-marker", Fcopy_marker, Scopy_marker, 0, 2, 0,
+diff --git a/src/pdumper.c b/src/pdumper.c
+index bb90549a4d9..cccaf32832f 100644
+--- a/src/pdumper.c
++++ b/src/pdumper.c
+@@ -2239,14 +2239,7 @@ dump_marker (struct dump_context *ctx, const struct Lisp_Marker *marker)
+     {
+       dump_field_lv_rawptr (ctx, out, marker, &marker->buffer,
+ 			    Lisp_Vectorlike, WEIGHT_NORMAL);
+-#ifndef HAVE_MPS
+-      dump_field_lv_rawptr (ctx, out, marker, &marker->next,
+-			    Lisp_Vectorlike, WEIGHT_STRONG);
+-#else
+-      DUMP_FIELD_COPY (out, marker, slot);
+-#endif
+-      DUMP_FIELD_COPY (out, marker, charpos);
+-      DUMP_FIELD_COPY (out, marker, bytepos);
++      DUMP_FIELD_COPY (out, marker, entry);
+     }
+   return finish_dump_pvec (ctx, &out->header);
+ }
+@@ -2920,6 +2913,7 @@ dump_buffer (struct dump_context *ctx, const struct buffer *in_buffer)
+   buffer->clip_changed = 0;
+   buffer->last_window_start = -1;
+   buffer->point_before_scroll_ = Qnil;
++  buffer->own_text.index = NULL;
+ 
+   dump_off base_offset = 0;
+   if (buffer->base_buffer)
+@@ -2973,13 +2967,8 @@ dump_buffer (struct dump_context *ctx, const struct buffer *in_buffer)
+       DUMP_FIELD_COPY (out, buffer, own_text.overlay_unchanged_modified);
+       if (buffer->own_text.intervals)
+         dump_field_fixup_later (ctx, out, buffer, &buffer->own_text.intervals);
+-#ifdef HAVE_MPS
+       dump_field_lv (ctx, out, buffer, &buffer->own_text.markers,
+ 		     WEIGHT_NORMAL);
+-#else
+-      dump_field_lv_rawptr (ctx, out, buffer, &buffer->own_text.markers,
+-                            Lisp_Vectorlike, WEIGHT_NORMAL);
+-#endif
+       DUMP_FIELD_COPY (out, buffer, own_text.inhibit_shrinking);
+       DUMP_FIELD_COPY (out, buffer, own_text.redisplay);
+     }
+diff --git a/src/print.c b/src/print.c
+index 8ddec6a9b81..6f0297001d0 100644
+--- a/src/print.c
++++ b/src/print.c
+@@ -222,7 +222,7 @@ print_finish (struct print_context *pc)
+       signal_after_change (PT - print_buffer.pos, 0, print_buffer.pos);
+     }
+   if (MARKERP (pc->old_printcharfun))
+-    set_marker_both (pc->old_printcharfun, Qnil, PT, PT_BYTE);
++    set_marker_both (pc->old_printcharfun, Qnil, PT);
+   if (pc->old_point >= 0)
+     SET_PT_BOTH (pc->old_point
+ 		 + (pc->old_point >= pc->start_point
+diff --git a/src/process.c b/src/process.c
+index f5fbbb0e196..c9b4e055ece 100644
+--- a/src/process.c
++++ b/src/process.c
+@@ -1287,8 +1287,7 @@ update_process_mark (struct Lisp_Process *p)
+   if (BUFFERP (buffer)
+       && XMARKER (p->mark)->buffer != XBUFFER (buffer))
+     set_marker_both (p->mark, buffer,
+-		     BUF_ZV (XBUFFER (buffer)),
+-		     BUF_ZV_BYTE (XBUFFER (buffer)));
++		     BUF_ZV (XBUFFER (buffer)));
+ }
+ 
+ DEFUN ("set-process-buffer", Fset_process_buffer, Sset_process_buffer,
+@@ -6391,9 +6390,9 @@ read_process_output_after_insert (struct Lisp_Process *p, Lisp_Object *old_read_
+      W3 is known to do that.  */
+   if (BUFFERP (p->buffer)
+       && (b = XBUFFER (p->buffer), b != current_buffer))
+-    set_marker_both (p->mark, p->buffer, BUF_PT (b), BUF_PT_BYTE (b));
++    set_marker_both (p->mark, p->buffer, BUF_PT (b));
+   else
+-    set_marker_both (p->mark, p->buffer, PT, PT_BYTE);
++    set_marker_both (p->mark, p->buffer, PT);
+ 
+   update_mode_lines = 23;
+ 
+@@ -8002,7 +8001,7 @@ DEFUN ("internal-default-process-sentinel", Finternal_default_process_sentinel,
+       insert_string (" ");
+       Finsert (1, &msg);
+       bset_read_only (current_buffer, tem);
+-      set_marker_both (p->mark, p->buffer, PT, PT_BYTE);
++      set_marker_both (p->mark, p->buffer, PT);
+ 
+       if (opoint >= before)
+ 	SET_PT_BOTH (opoint + (PT - before),
+diff --git a/src/text-index.c b/src/text-index.c
+new file mode 100644
+index 00000000000..576e47f8bbc
+--- /dev/null
++++ b/src/text-index.c
+@@ -0,0 +1,760 @@
++/* Text index for character positions.
++   Copyright (C) 2025 Free Software Foundation, Inc.
++
++This file is part of GNU Emacs.
++
++GNU Emacs is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or (at
++your option) any later version.
++
++GNU Emacs is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
++
++/* A text index is used to map character positions in buffer text to
++   byte positions and vice versa.  (One could also think of using it for
++   other things like line numbers, but that is currently not done.)
++
++   The index divides buffer text into intervals of constant size =
++   number of bytes.
++
++   BEG_BYTE                                        Z_BYTE
++   |-------------------------------------------------|
++   | interval | interval | interval | interval |          |
++   0          1          2          3          4          -
++		   index in character position array
++
++   The index consists of an array of character positions.  The entry at
++   index ENTRY is the character position of the character containing the
++   byte position ENTRY * interval size.  There is no entry for a partial
++   interval at the end of the text.  The position (Z, Z_BYTE) is instead
++   handled specially in the code.
++
++   Note that the byte positions at interval boundaries can be in the
++   middle of a multi-byte character.
++
++	     character start byte position
++		|
++	  ------01234-------- bytes of a character (up to 5 in Emacs'
++		   |          internal encoding)
++	       N * interval
++
++   To find the character position corresponding to a byte position
++   BYTEPOS, we look up the character position in the index at BYTEPOS /
++   interval.  From there, we can scan forward in the text until we reach
++   BYTEPOS, counting characters, or we scan backward from the interval
++   end, if that is closer.
++
++   To find the byte position BYTEPOS corresponding to a given character
++   position CHARPOS, we search the index for the last entry ENTRY whose
++   character position is <= CHARPOS.  That entry corresponds to a byte
++   position ENTRY * interval size.  From there, we scan the text until
++   we reach BYTEPOS, counting characters until we reach CHARPOS.  The
++   byte position reached at the end is BYTEPOS.  We also scan backward
++   from the interval end, if that looks advantageous.
++
++   Why divide the text into intervals of bytes instead of characters?
++   Dividing the text into intervals of characters makes scanning
++   overhead less uniform, since characters can be of different lengths
++   (1 to 5 bytes).  */
++
++#include <config.h>
++#include "lisp.h"
++#include "buffer.h"
++#include "dispextern.h"		/* for struct text_pos */
++#include "text-index.h"
++
++// clang-format off
++
++struct text_index
++{
++  /* Array of character positions.  Value at some index I is the
++     character position of byte position I * TEXT_INDEX_INTERVAL.
++     Note that that byte position may be in the middle of a character.
++     The value at index 0 is BEG.  */
++  ptrdiff_t *charpos;
++
++  /* Number of valid entries in the above array.  This is always at least 1
++     because the first entry is for BEG.  */
++  size_t nentries;
++
++  /* Number of entries allocated.  */
++  size_t capacity;
++
++  /* Known position cache.  This is the last position conversion result.  */
++  struct text_pos cache;
++};
++
++enum
++{
++  /* Number of bytes in an interval.
++     Tradeoff between cost of the text-index array and cost of scanning
++     bytes between the positions recorded in the array.  */
++  TEXT_INDEX_INTERVAL = 4096,
++
++  /* Default capacity in number of intervals for text indices.  */
++  TEXT_INDEX_DEFAULT_CAPACITY = 20,
++
++  /* Value indicating a non-position.  */
++  TEXT_INDEX_INVALID_POSITION = -1
++};
++
++/* Get PT, GPT, Z as text_pos structures..  Use these instead of BUF_PT,
++   and so on to make sure to never try to get positions from markers,
++   like BUF_PT does, which could lead to infinite recursion.  */
++
++static struct text_pos
++z_pos (const struct buffer *b)
++{
++  return (struct text_pos)
++    {.charpos = b->text->z, .bytepos = b->text->z_byte};
++}
++
++static struct text_pos
++beg_pos (const struct buffer *b)
++{
++  return (struct text_pos)
++    {.charpos = BEG, .bytepos = BEG_BYTE};
++}
++
++static struct text_pos
++gpt_pos (const struct buffer *b)
++{
++  return (struct text_pos)
++    {.charpos = b->text->gpt, .bytepos = b->text->gpt_byte};
++}
++
++static struct text_pos
++pt_pos (const struct buffer *b)
++{
++  return (struct text_pos)
++    {.charpos = b->pt, .bytepos = b->pt_byte};
++}
++
++/* Return true if CHARPOS can be considered close enough to POS for text
++   index TI so that further improvements are not considered
++   necessary.  */
++
++static bool
++is_close_enough_charpos (ptrdiff_t charpos,
++			 const struct text_pos pos)
++{
++  return eabs (charpos - pos.charpos) < TEXT_INDEX_INTERVAL / 4;
++}
++
++/* Cache (CHARPOS, BYTEPOS) as known position in index TI.  */
++
++static void
++cache (struct text_index *ti, ptrdiff_t charpos, ptrdiff_t bytepos)
++{
++  ti->cache.charpos = charpos;
++  ti->cache.bytepos = bytepos;
++}
++
++/* Invalidate known position cache of TI.  */
++
++static void
++invalidate_cache (struct text_index *ti)
++{
++  ti->cache.charpos = TEXT_INDEX_INVALID_POSITION;
++  ti->cache.bytepos = TEXT_INDEX_INVALID_POSITION;
++}
++
++/* Value is true is known position cache of TI is valid.  */
++
++static bool
++is_cache_valid (const struct text_index *ti)
++{
++  return ti->cache.bytepos != TEXT_INDEX_INVALID_POSITION;
++}
++
++/* Return the byte position in index TI corresponding to index entry
++   ENTRY.  Note that this position cab be in the middle of a multi-byte
++   character.  */
++
++static ptrdiff_t
++index_bytepos (const struct text_index *ti, ptrdiff_t entry)
++{
++  return BEG_BYTE + entry * TEXT_INDEX_INTERVAL;
++}
++
++/* Return the character position in index TI corresponding to index
++   entry ENTRY.  */
++
++static ptrdiff_t
++index_charpos (const struct text_index *ti, ptrdiff_t entry)
++{
++  eassert (entry >= 0 && entry < ti->nentries);
++  return ti->charpos[entry];
++}
++
++/* Return the entry index for BYTEPOS in text index TI.  */
++
++static ptrdiff_t
++index_bytepos_entry (const struct text_index *ti, ptrdiff_t bytepos)
++{
++  return (bytepos - BEG_BYTE) / TEXT_INDEX_INTERVAL;
++}
++
++/* Return the entry of index TI for the largest character position that
++   is <= CHARPOS.  */
++
++static ptrdiff_t
++index_charpos_entry (const struct text_index *ti, ptrdiff_t charpos)
++{
++  ptrdiff_t entry = -1;
++  for (ptrdiff_t low = 0, high = ti->nentries - 1; low <= high;)
++    {
++      ptrdiff_t mid = low + (high - low) / 2;
++      if (ti->charpos[mid] <= charpos)
++	{
++	  entry = mid;
++	  low = mid + 1;
++	}
++      else
++	high = mid - 1;
++    }
++  eassert (entry >= 0 && entry < ti->nentries);
++  return entry;
++}
++
++/* Return TI's index entry ENTRY as a struct text_pos.  */
++
++static struct text_pos
++index_text_pos (const struct text_index *ti, ptrdiff_t entry)
++{
++  eassert (entry >= 0 && entry < ti->nentries);
++  return (struct text_pos) {
++    .charpos = index_charpos (ti, entry),
++    .bytepos = index_bytepos (ti, entry)
++  };
++}
++
++/* Return index TI's maximum indexed character position.  */
++
++static ptrdiff_t
++max_indexed_charpos (const struct text_index *ti)
++{
++  return index_charpos (ti, ti->nentries - 1);
++}
++
++/* Return index TI's maximum indexed byte position.  */
++
++static ptrdiff_t
++max_indexed_bytepos (const struct text_index *ti)
++{
++  return index_bytepos (ti, ti->nentries - 1);
++}
++
++/* Given a byte position BYTEPOS in buffer B, return the byte position
++   where the character starts that contains BYTEPOS: */
++
++static ptrdiff_t
++char_start_bytepos (struct buffer *b, ptrdiff_t bytepos)
++{
++  while (!CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)))
++    --bytepos;
++  return bytepos;
++}
++
++/* Allocate and return a text index structure with default capacity.  */
++
++static struct text_index *
++make_text_index (void)
++{
++  struct text_index *ti = xzalloc (sizeof *ti);
++  ti->capacity = TEXT_INDEX_DEFAULT_CAPACITY;
++  ti->charpos = xnmalloc (ti->capacity, sizeof *ti->charpos);
++  ti->charpos[0] = BEG;
++  ti->nentries = 1;
++  invalidate_cache (ti);
++  return ti;
++}
++
++/* Free the text index TI if it is non-null.  */
++
++void
++text_index_free (struct text_index *ti)
++{
++  if (ti == NULL)
++    return;
++  xfree (ti->charpos);
++  xfree (ti);
++}
++
++/* Append entry for CHARPOS to index TI.  */
++
++static void
++append_entry (struct text_index *ti, ptrdiff_t charpos)
++{
++  if (ti->nentries == ti->capacity)
++    {
++      eassert (ti->capacity > 0);
++      ti->capacity = 2 * ti->capacity;
++      ti->charpos = xnrealloc (ti->charpos, ti->capacity,
++			       sizeof *ti->charpos);
++    }
++  ti->charpos[ti->nentries] = charpos;
++  ++ti->nentries;
++}
++
++/* Build text index of buffer B up to and including position TO.
++   One of TO.charpos or TO.bytepos must be a valid position.  */
++
++static void
++build_index (struct buffer *b, const struct text_pos to)
++{
++  struct text_index *ti = b->text->index;
++
++  eassert (to.charpos != TEXT_INDEX_INVALID_POSITION
++	   || to.bytepos != TEXT_INDEX_INVALID_POSITION);
++  eassert (to.charpos == TEXT_INDEX_INVALID_POSITION
++	   || to.bytepos == TEXT_INDEX_INVALID_POSITION);
++  eassert (to.bytepos == TEXT_INDEX_INVALID_POSITION
++	   || (to.bytepos >= BEG_BYTE
++	       && to.bytepos <= z_pos (b).bytepos));
++  eassert (to.bytepos == TEXT_INDEX_INVALID_POSITION
++	   || to.bytepos > max_indexed_bytepos (ti));
++  eassert (to.charpos == TEXT_INDEX_INVALID_POSITION
++	   || (to.charpos >= BEG && to.charpos <= z_pos (b).charpos));
++  eassert (to.charpos == TEXT_INDEX_INVALID_POSITION
++	   || to.charpos > max_indexed_charpos (ti));
++
++  /* Start at the byte position of the last index entry.  if TO_BYTEPOS
++     equals the byte position of that entry, this is okay, because the
++     character position at that byte position cannot have changed.  */
++  const ptrdiff_t last_entry = ti->nentries - 1;
++  ptrdiff_t charpos = index_charpos (ti, last_entry);
++  ptrdiff_t bytepos = index_bytepos (ti, last_entry);
++  ptrdiff_t next_stop = bytepos + TEXT_INDEX_INTERVAL;
++
++  /* Quickly give up if there are not enough bytes left to scan to make
++     a new index entry.  */
++  const ptrdiff_t z_byte = z_pos (b).bytepos;
++  if (next_stop >= z_byte)
++    return;
++
++  /* Loop over bytes, starting one after the index entry we start from
++     because we are only interested in yet unknown entries, and the
++     one at EMTRY can be assumed to stay unchanged.  */
++  for (++bytepos; bytepos < z_byte; ++bytepos)
++    {
++      if (CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)))
++	++charpos;
++
++      if (bytepos == next_stop)
++	{
++	  /* Add a new index entry.  */
++	  append_entry (ti, charpos);
++
++	  /* If we reached the one after the position we are interested
++	     in, we're done since we can then scan forward and backward
++	     to BYTEPOS.  */
++	  if ((to.bytepos != TEXT_INDEX_INVALID_POSITION
++	       && bytepos > to.bytepos)
++	      || (to.charpos != TEXT_INDEX_INVALID_POSITION
++		  && charpos > to.charpos))
++	    break;
++
++	  /* Compute next stop. We are done if no next entry
++	     can be built.  */
++	  next_stop += TEXT_INDEX_INTERVAL;
++	  if (next_stop >= z_byte)
++	    break;
++	}
++    }
++}
++
++/* Make sure that buffer B has a text index.  Value is a pointer to the
++   possibly newly allocated t4xt index.  */
++
++static struct text_index *
++ensure_has_index (struct buffer *b)
++{
++  if (b->text->index == NULL)
++    b->text->index = make_text_index ();
++  return b->text->index;
++}
++
++/* Make sure that buffer B's text index contains BYTEPOS.  */
++
++static void
++ensure_bytepos_indexed (struct buffer *b, ptrdiff_t bytepos)
++{
++  struct text_index *ti = ensure_has_index (b);
++  if (bytepos > max_indexed_bytepos (ti))
++    {
++      struct text_pos to
++	= {.charpos = TEXT_INDEX_INVALID_POSITION, .bytepos = bytepos};
++      build_index (b, to);
++    }
++}
++
++/* Make sure that buffer B's text index contains CHARPOS.  */
++
++static void
++ensure_charpos_indexed (struct buffer *b, ptrdiff_t charpos)
++{
++  struct text_index *ti = ensure_has_index (b);
++  if (charpos > max_indexed_charpos (ti))
++    {
++      struct text_pos to
++	= {.charpos = charpos, .bytepos = TEXT_INDEX_INVALID_POSITION};
++      build_index (b, to);
++    }
++}
++
++/* In buffer B, starting from index entry ENTRY, scan forward in B's
++   text to TO_BYTEPOS, and return the corresponding character
++   position.  */
++
++static ptrdiff_t
++charpos_forward_to_bytepos (struct buffer *b, const struct text_pos from,
++			    const ptrdiff_t to_bytepos)
++{
++  eassert (from.bytepos <= to_bytepos);
++  ptrdiff_t bytepos = from.bytepos;
++  ptrdiff_t charpos = from.charpos;
++  while (bytepos < to_bytepos)
++    {
++      ++bytepos;
++      if (CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)))
++	++charpos;
++    }
++  return charpos;
++}
++
++/* In buffer B, starting from FROM, scan backward in B's text to
++   TO_BYTEPOS, and return the corresponding character position.  */
++
++static ptrdiff_t
++charpos_backward_to_bytepos (struct buffer *b, const struct text_pos from,
++			     const ptrdiff_t to_bytepos)
++{
++  eassert (from.bytepos >= to_bytepos);
++  ptrdiff_t bytepos = char_start_bytepos (b, from.bytepos);
++  ptrdiff_t charpos = from.charpos;
++  while (bytepos > to_bytepos)
++    {
++      --bytepos;
++      if (CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)))
++	--charpos;
++    }
++  return charpos;
++}
++
++/* In buffer B, starting from FROM, scan forward in B's text to
++   TO_CHARPOS, and return the corresponding byte position.  FROM's
++   charpos must be <= TO_CHARPOS.  */
++
++static ptrdiff_t
++bytepos_forward_to_charpos (struct buffer *b, const struct text_pos from,
++			    ptrdiff_t to_charpos)
++{
++  eassert (from.charpos <= to_charpos);
++  ptrdiff_t bytepos = char_start_bytepos (b, from.bytepos);
++  ptrdiff_t charpos = from.charpos;
++  while (charpos < to_charpos)
++    {
++      ++bytepos;
++      if (CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)))
++	++charpos;
++    }
++  eassert (CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)));
++  return bytepos;
++}
++
++/* In buffer B, starting from FROM, scan backward in B's text to
++   TO_CHARPOS, and return the corresponding byte position.  FROM's
++   charpos must be >= TO_CHARPOS.  */
++
++static ptrdiff_t
++bytepos_backward_to_charpos (struct buffer *b, const struct text_pos from,
++			     const ptrdiff_t to_charpos)
++{
++  eassert (from.charpos >= to_charpos);
++  ptrdiff_t bytepos = char_start_bytepos (b, from.bytepos);
++  ptrdiff_t charpos = from.charpos;
++  while (charpos > to_charpos)
++    {
++      --bytepos;
++      if (CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)))
++	--charpos;
++    }
++  eassert (CHAR_HEAD_P (BUF_FETCH_BYTE (b, bytepos)));
++  return bytepos;
++}
++
++/* Return the next known (char, byte) position in buffer B after the one
++   in index entry ENTRY.  */
++
++static struct text_pos
++next_known_text_pos (struct buffer *b, ptrdiff_t entry)
++{
++  const struct text_index *ti = b->text->index;
++  if (entry + 1 < ti->nentries)
++    return index_text_pos (ti, entry + 1);
++  return z_pos (b);
++}
++
++/* Improve the known bytepos bounds *PREV and *NEXT if KNOWN is closer
++   to BYTEPOS.  */
++
++static void
++narrow_bytepos_bounds_1 (const struct text_pos known, struct text_pos *prev,
++			 struct text_pos *next, const ptrdiff_t bytepos)
++{
++  eassert (bytepos >= prev->bytepos && bytepos <= next->bytepos);
++  eassert (known.bytepos != TEXT_INDEX_INVALID_POSITION);
++
++  /* If KNOWN is in (PREV, BYTEPOS] it is a better PREV. */
++  if (known.bytepos <= bytepos
++      && known.bytepos > prev->bytepos)
++    *prev = known;
++
++  /* If KNOWN is in [BYTEPOS NEXT) it is a better NEXT. */
++  if (known.bytepos >= bytepos
++      && known.bytepos < next->bytepos)
++    *next = known;
++}
++
++/* Improve the known bytepos bounds *PREV and *NEXT of buffer B using
++   known positions in B.  BYTEPOS is a byte position to convert to a
++   character position.  */
++
++static void
++narrow_bytepos_bounds (struct buffer *b, struct text_pos *prev,
++		       struct text_pos *next, const ptrdiff_t bytepos)
++{
++  narrow_bytepos_bounds_1 (pt_pos (b),  prev, next, bytepos);
++  narrow_bytepos_bounds_1 (gpt_pos (b), prev, next, bytepos);
++
++  struct text_index *ti = b->text->index;
++  if (is_cache_valid (ti))
++    narrow_bytepos_bounds_1 (ti->cache, prev, next, bytepos);
++}
++
++/* Improve the known bytepos bounds *PREV and *NEXT if KNOWN is closer
++   to BYTEPOS.  */
++
++static void
++narrow_charpos_bounds_1 (const struct text_pos known, struct text_pos *prev,
++			 struct text_pos *next, const ptrdiff_t charpos)
++{
++  eassert (charpos >= prev->charpos && charpos <= next->charpos);
++  eassert (known.charpos != TEXT_INDEX_INVALID_POSITION);
++
++  /* If KNOWN is in (PREV, BYTEPOS] it is a better PREV. */
++  if (known.charpos <= charpos
++      && known.charpos > prev->charpos)
++    *prev = known;
++
++  /* If KNOWN is in [BYTEPOS NEXT) it is a better NEXT. */
++  if (known.charpos >= charpos
++      && known.charpos < next->charpos)
++    *next = known;
++}
++
++/* Improve the known bytepos bounds *PREV and *NEXT of buffer B using
++   known positions in B.  BYTEPOS is a byte position to convert to a
++   character position.  */
++
++static void
++narrow_charpos_bounds (struct buffer *b, struct text_pos *prev,
++		       struct text_pos *next, const ptrdiff_t charpos)
++{
++  narrow_charpos_bounds_1 (pt_pos (b),  prev, next, charpos);
++  narrow_charpos_bounds_1 (gpt_pos (b), prev, next, charpos);
++
++  struct text_index *ti = b->text->index;
++  if (is_cache_valid (ti))
++    narrow_charpos_bounds_1 (ti->cache, prev, next, charpos);
++}
++
++/* Return the character position in buffer B corresponding to
++   byte position BYTEPOS.  */
++
++ptrdiff_t
++buf_bytepos_to_charpos (struct buffer *b, const ptrdiff_t bytepos)
++{
++  /* FIXME: Can BYTEPOS ever be outside of BEGV_BYTE..ZV_BYTE?  */
++  /* If this buffer has as many characters as bytes, each character must
++     be one byte.  This takes care of the case where
++     enable-multibyte-characters is nil.  */
++  const struct text_pos z = z_pos (b);
++  if (z.charpos == z.bytepos)
++    return bytepos;
++
++  /* Begin with the interval (BEG, Z), and improve on that by taking known
++     positions into account like PT, GPT and the cache.  This might
++     already find the answer.  */
++  struct text_index *ti = ensure_has_index (b);
++  struct text_pos prev = beg_pos (b);
++  struct text_pos next = z;
++
++  narrow_bytepos_bounds (b, &prev, &next, bytepos);
++
++  /* Z_BYTE does not have an index entry because we don't want
++     extra entries for (Z, Z_BYTE), so short-circuit *before* looking
++     up the index.  Changing that would be possible but leads to more
++     code than this if-statement, so it's probably not worth it.  */
++  if (next.bytepos == bytepos)
++    return next.charpos;
++
++  ensure_bytepos_indexed (b, bytepos);
++  const ptrdiff_t entry = index_bytepos_entry (ti, bytepos);
++  narrow_bytepos_bounds_1 (index_text_pos (ti, entry), &prev, &next, bytepos);
++  narrow_bytepos_bounds_1 (next_known_text_pos (b, entry),
++			   &prev, &next, bytepos);
++
++  if (next.charpos - prev.charpos == next.bytepos - prev.bytepos
++      /* Beware: NEXT and PREV can be in the middle of multibyte chars!  */
++      && CHAR_HEAD_P (BUF_FETCH_BYTE (b, prev.bytepos)))
++    return prev.charpos + (bytepos - prev.bytepos); /* ASCII-only!  */
++
++  /* Scan forward if the distance to the previous known position is
++     smaller than the distance to the next known position.  */
++  const ptrdiff_t charpos
++    = (bytepos - prev.bytepos < next.bytepos - bytepos)
++      ? charpos_forward_to_bytepos (b, prev, bytepos)
++      : charpos_backward_to_bytepos (b, next, bytepos);
++
++  cache (ti, charpos, bytepos);
++  return charpos;
++}
++
++/* Return the byte position in buffer B corresponding to character
++   position CHARPOS.  */
++
++ptrdiff_t
++buf_charpos_to_bytepos (struct buffer *b, const ptrdiff_t charpos)
++{
++  /* FIXME: Can CHARPOS ever be outside of BEGV..ZV?  */
++  /* If this buffer has as many characters as bytes, each character must
++     be one byte.  This takes care of the case where
++     enable-multibyte-characters is nil.  */
++  const struct text_pos z = z_pos (b);
++  if (z.charpos == z.bytepos)
++    return charpos;
++
++  /* Begin with the interval (BEG, Z), and improve on that by taking known
++     positions into account like PT, GPT and the cache.  This might
++     already find the answer.  */
++  struct text_index *ti = ensure_has_index (b);
++  struct text_pos prev = beg_pos (b);
++  struct text_pos next = z;
++
++  narrow_charpos_bounds (b, &prev, &next, charpos);
++
++  if (next.charpos - prev.charpos == next.bytepos - prev.bytepos)
++    return prev.bytepos + (charpos - prev.charpos); /* ASCII-only!  */
++  else if (next.charpos == charpos)
++    return next.bytepos;
++
++  /* If one of the bounds is already good enough, avoid consulting
++     the index since that involves some overhead. */
++  if (!is_close_enough_charpos (charpos, prev)
++      && !is_close_enough_charpos (charpos, next))
++    {
++      ensure_charpos_indexed (b, charpos);
++      const ptrdiff_t entry = index_charpos_entry (ti, charpos);
++      const struct text_pos index_prev = index_text_pos (ti, entry);
++      narrow_charpos_bounds_1 (index_prev, &prev, &next, charpos);
++      const struct text_pos index_next = next_known_text_pos (b, entry);
++      narrow_charpos_bounds_1 (index_next, &prev, &next, charpos);
++
++      if (next.charpos - prev.charpos == next.bytepos - prev.bytepos
++	  /* Beware: NEXT and PREV can be in the middle of multibyte chars!  */
++	  && CHAR_HEAD_P (BUF_FETCH_BYTE (b, prev.bytepos))
++	  && CHAR_HEAD_P (BUF_FETCH_BYTE (b, next.bytepos - 1)))
++	return prev.bytepos + (charpos - prev.charpos); /* ASCII-only!  */
++    }
++
++  /* Scan forward if the distance to the previous known position is
++     smaller than the distance to the next known position.  */
++  const ptrdiff_t bytepos
++    = (charpos - prev.charpos < next.charpos - charpos
++       ? bytepos_forward_to_charpos (b, prev, charpos)
++       : bytepos_backward_to_charpos (b, next, charpos));
++
++  cache (ti, charpos, bytepos);
++  return bytepos;
++}
++
++/* Invalidate index entries for all positions > BYTEPOS in buffer B.
++   Note that the entry for BYTEPOS itself, if it is at an interval
++   boundary, remains unchanged.  */
++
++void
++text_index_invalidate (struct buffer *b, ptrdiff_t bytepos)
++{
++  struct text_index *ti = b->text->index;
++  if (ti == NULL)
++    return;
++
++  const ptrdiff_t last_valid_entry = index_bytepos_entry (ti, bytepos);
++  ti->nentries = min (ti->nentries, last_valid_entry + 1);
++
++  if (ti->cache.bytepos > bytepos)
++    invalidate_cache (ti);
++}
++
++DEFUN ("text-index--charpos-to-bytepos", Ftext_index__charpos_to_bytepos,
++       Stext_index__charpos_to_bytepos, 1, 1, 0,
++       doc: /* Convert CHARPOS to a bytepos in current buffer.
++If POSITION is out of range, the value is nil.  */)
++  (Lisp_Object charpos)
++{
++  const EMACS_INT pos = fix_position (charpos);
++  if (pos < BEG || pos > Z)
++    return Qnil;
++  ptrdiff_t bytepos = buf_charpos_to_bytepos (current_buffer, pos);
++  return make_fixnum (bytepos);
++}
++
++DEFUN ("text-index--bytepos-to-charpos", Ftext_index__bytepos_to_charpos,
++       Stext_index__bytepos_to_charpos, 1, 1, 0,
++       doc: /* Convert BYTEPOS to a charpos in current buffer.
++If BYTEPOS is out of range, the value is nil.  */)
++  (Lisp_Object bytepos)
++{
++  CHECK_FIXNUM (bytepos);
++  const ptrdiff_t pos_byte = XFIXNUM (bytepos);
++  if (pos_byte < BEG_BYTE || pos_byte > Z_BYTE)
++    return Qnil;
++  ptrdiff_t charpos = buf_bytepos_to_charpos (current_buffer, pos_byte);
++  return make_fixnum (charpos);
++}
++
++DEFUN ("text-index--charpos-to-bytepos-brute",
++       Ftext_index__charpos_to_bytepos_brute,
++       Stext_index__charpos_to_bytepos_brute, 1, 1, 0,
++       doc: /* Convert CHARPOS to a bytepos in current buffer.
++Compute with brute force.  */)
++  (Lisp_Object pos)
++{
++  const EMACS_INT to_charpos = fix_position (pos);
++  if (to_charpos < BEG || to_charpos > Z)
++    return Qnil;
++  ptrdiff_t charpos = BEG, bytepos = BEG_BYTE;
++  while (charpos < to_charpos)
++    {
++      ++bytepos;
++      if (CHAR_HEAD_P (FETCH_BYTE (bytepos)))
++	++charpos;
++    }
++  return make_fixnum (bytepos);
++}
++
++void
++syms_of_text_index (void)
++{
++  defsubr (&Stext_index__charpos_to_bytepos);
++  defsubr (&Stext_index__bytepos_to_charpos);
++  defsubr (&Stext_index__charpos_to_bytepos_brute);
++}
+diff --git a/src/text-index.h b/src/text-index.h
+new file mode 100644
+index 00000000000..112802903ed
+--- /dev/null
++++ b/src/text-index.h
+@@ -0,0 +1,33 @@
++/* Text index for character positions.
++   Copyright (C) 2025 Free Software Foundation, Inc.
++
++This file is part of GNU Emacs.
++
++GNU Emacs is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or (at
++your option) any later version.
++
++GNU Emacs is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
++
++#ifndef EMACS_TEXT_INDEX_H
++# define EMACS_TEXT_INDEX_H
++
++#include "config.h"
++# include "lisp.h"
++
++struct text_index;
++
++void syms_of_text_index (void);
++void text_index_free (struct text_index *ti);
++ptrdiff_t buf_bytepos_to_charpos (struct buffer *b, ptrdiff_t bytepos);
++ptrdiff_t buf_charpos_to_bytepos (struct buffer *b, ptrdiff_t charpos);
++void text_index_invalidate (struct buffer *b, ptrdiff_t from_byte);
++
++#endif /* EMACS_TEXT_INDEX_H */
+diff --git a/src/textconv.c b/src/textconv.c
+index 105a8077072..45835defcdb 100644
+--- a/src/textconv.c
++++ b/src/textconv.c
+@@ -487,8 +487,7 @@ record_buffer_change (ptrdiff_t beg, ptrdiff_t end,
+   XSETBUFFER (buffer, current_buffer);
+ 
+   /* Make markers for both BEG and END.  */
+-  beg_marker = build_marker (current_buffer, beg,
+-			     CHAR_TO_BYTE (beg));
++  beg_marker = build_marker (current_buffer, beg);
+ 
+   /* If BEG and END are identical, make sure to keep the markers
+      eq.  */
+@@ -497,8 +496,7 @@ record_buffer_change (ptrdiff_t beg, ptrdiff_t end,
+     end_marker = beg_marker;
+   else
+     {
+-      end_marker = build_marker (current_buffer, end,
+-				 CHAR_TO_BYTE (end));
++      end_marker = build_marker (current_buffer, end);
+ 
+       /* Otherwise, make sure the marker extends past inserted
+ 	 text.  */
+@@ -869,9 +867,9 @@ really_set_composing_text (struct frame *f, ptrdiff_t position,
+ 
+       /* Now set the markers which denote the composition region.  */
+       f->conversion.compose_region_start
+-	= build_marker (current_buffer, PT, PT_BYTE);
++	= build_marker (current_buffer, PT);
+       f->conversion.compose_region_end
+-	= build_marker (current_buffer, PT, PT_BYTE);
++	= build_marker (current_buffer, PT);
+ 
+       Fset_marker_insertion_type (f->conversion.compose_region_end,
+ 				  Qt);
+@@ -1170,8 +1168,8 @@ locate_and_save_position_in_field (struct frame *f, struct window *w,
+     }
+   else
+     {
+-      c1 = build_marker (current_buffer, beg, CHAR_TO_BYTE (beg));
+-      c2 = build_marker (current_buffer, end, CHAR_TO_BYTE (end));
++      c1 = build_marker (current_buffer, beg);
++      c2 = build_marker (current_buffer, end);
+       Fset_marker_insertion_type (c2, Qt);
+       f->conversion.field = Fcons (c1, Fcons (c2, window));
+     }
+diff --git a/src/undo.c b/src/undo.c
+index 1a91aca01aa..aa05a9aee14 100644
+--- a/src/undo.c
++++ b/src/undo.c
+@@ -128,9 +128,9 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
+ {
+   prepare_record ();
+ 
+-  DO_MARKERS (current_buffer, m)
++  FOR_EACH_MARKER (current_buffer, m)
+     {
+-      ptrdiff_t charpos = m->charpos;
++      ptrdiff_t charpos = marker_vector_charpos (m);
+       eassert (charpos <= Z);
+ 
+       if (from <= charpos && charpos <= to)
+@@ -154,7 +154,6 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
+             }
+         }
+     }
+-  END_DO_MARKERS;
+ }
+ 
+ /* Record that a deletion is about to take place, of the characters in
+diff --git a/src/window.c b/src/window.c
+index 7a52ca7aa0a..32d6ba86580 100644
+--- a/src/window.c
++++ b/src/window.c
+@@ -600,8 +600,7 @@ select_window_1 (Lisp_Object window, bool inhibit_point_swap)
+       struct window *ow = XWINDOW (selected_window);
+       if (BUFFERP (ow->contents))
+ 	set_marker_both (ow->pointm, ow->contents,
+-			 BUF_PT (XBUFFER (ow->contents)),
+-			 BUF_PT_BYTE (XBUFFER (ow->contents)));
++			 BUF_PT (XBUFFER (ow->contents)));
+     }
+ 
+   selected_window = window;
+@@ -1782,7 +1781,7 @@ window_point (struct window *w)
+ {
+   return (w == XWINDOW (selected_window)
+           ? BUF_PT (XBUFFER (w->contents))
+-          : XMARKER (w->pointm)->charpos);
++          : marker_vector_charpos (XMARKER (w->pointm)));
+ }
+ 
+ DEFUN ("window-point", Fwindow_point, Swindow_point, 0, 1, 0,
+@@ -3708,7 +3707,7 @@ DEFUN ("delete-other-windows-internal", Fdelete_other_windows_internal,
+ 	     can have unwanted side effects due to text properties.  */
+ 	  pos = *vmotion (startpos, startbyte, -top, w);
+ 
+-	  set_marker_both (w->start, w->contents, pos.bufpos, pos.bytepos);
++	  set_marker_both (w->start, w->contents, pos.bufpos);
+ 	  w->window_end_valid = false;
+ 	  w->start_at_line_beg = (pos.bytepos == BEGV_BYTE
+ 				    || FETCH_BYTE (pos.bytepos - 1) == '\n');
+@@ -4387,8 +4386,8 @@ set_window_buffer (Lisp_Object window, Lisp_Object buffer,
+       w->hscroll = w->min_hscroll = w->hscroll_whole = 0;
+       w->suspend_auto_hscroll = false;
+       w->vscroll = 0;
+-      set_marker_both (w->pointm, buffer, BUF_PT (b), BUF_PT_BYTE (b));
+-      set_marker_both (w->old_pointm, buffer, BUF_PT (b), BUF_PT_BYTE (b));
++      set_marker_both (w->pointm, buffer, BUF_PT (b));
++      set_marker_both (w->old_pointm, buffer, BUF_PT (b));
+       set_marker_restricted (w->start,
+ 			     make_fixnum (b->last_window_start),
+ 			     buffer);
+@@ -4574,9 +4573,9 @@ temp_output_buffer_show (register Lisp_Object buf)
+       w = XWINDOW (window);
+       w->hscroll = w->min_hscroll = w->hscroll_whole = 0;
+       w->suspend_auto_hscroll = false;
+-      set_marker_restricted_both (w->start, buf, BEG, BEG);
+-      set_marker_restricted_both (w->pointm, buf, BEG, BEG);
+-      set_marker_restricted_both (w->old_pointm, buf, BEG, BEG);
++      set_marker_restricted_both (w->start, buf, BEG);
++      set_marker_restricted_both (w->pointm, buf, BEG);
++      set_marker_restricted_both (w->old_pointm, buf, BEG);
+ 
+       /* Run temp-buffer-show-hook, with the chosen window selected
+ 	 and its buffer current.  */
+@@ -5675,11 +5674,11 @@ DEFUN ("split-window-internal", Fsplit_window_internal, Ssplit_window_internal,
+       /* Get dead window back its old buffer and markers.  */
+       wset_buffer (n, n->old_buffer);
+       set_marker_restricted
+-	(n->start, make_fixnum (XMARKER (n->start)->charpos), n->contents);
++	(n->start, make_fixnum (marker_vector_charpos (XMARKER (n->start))), n->contents);
+       set_marker_restricted
+-	(n->pointm, make_fixnum (XMARKER (n->pointm)->charpos), n->contents);
++	(n->pointm, make_fixnum (marker_vector_charpos (XMARKER (n->pointm))), n->contents);
+       set_marker_restricted
+-	(n->old_pointm, make_fixnum (XMARKER (n->old_pointm)->charpos),
++	(n->old_pointm, make_fixnum (marker_vector_charpos (XMARKER (n->old_pointm))),
+ 	 n->contents);
+ 
+       Vwindow_list = Qnil;
+@@ -6294,7 +6293,7 @@ window_scroll_for_long_lines (struct window *w, int n, bool noerror)
+   if (pos.bufpos < ZV)
+     {
+       set_marker_restricted_both (w->start, w->contents,
+-				  pos.bufpos, pos.bytepos);
++				  pos.bufpos);
+       w->start_at_line_beg = bolp;
+       wset_update_mode_line (w);
+       /* Set force_start so that redisplay_window will run
+@@ -6616,8 +6615,7 @@ window_scroll_pixel_based (Lisp_Object window, int n, bool whole, bool noerror)
+ 	}
+ 
+       /* Set the window start, and set up the window for redisplay.  */
+-      set_marker_restricted_both (w->start, w->contents, IT_CHARPOS (it),
+-				  IT_BYTEPOS (it));
++      set_marker_restricted_both (w->start, w->contents, IT_CHARPOS (it));
+       bytepos = marker_byte_position (w->start);
+       w->start_at_line_beg = (pos == BEGV || FETCH_BYTE (bytepos - 1) == '\n');
+       wset_update_mode_line (w);
+@@ -6879,7 +6877,7 @@ window_scroll_line_based (Lisp_Object window, int n, bool whole, bool noerror)
+     {
+       int this_scroll_margin = window_scroll_margin (w, MARGIN_IN_LINES);
+ 
+-      set_marker_restricted_both (w->start, w->contents, pos, pos_byte);
++      set_marker_restricted_both (w->start, w->contents, pos);
+       w->start_at_line_beg = !NILP (bolp);
+       wset_update_mode_line (w);
+       /* Set force_start so that redisplay_window will run
+@@ -7032,8 +7030,8 @@ scroll_command (Lisp_Object window, Lisp_Object n, int direction)
+ 
+   if (other_window)
+     {
+-      set_marker_both (w->pointm, Qnil, PT, PT_BYTE);
+-      set_marker_both (w->old_pointm, Qnil, PT, PT_BYTE);
++      set_marker_both (w->pointm, Qnil, PT);
++      set_marker_both (w->old_pointm, Qnil, PT);
+     }
+ 
+   unbind_to (count, Qnil);
+@@ -7453,7 +7451,7 @@ DEFUN ("recenter", Frecenter, Srecenter, 0, 2, "P\np",
+     }
+ 
+   /* Set the new window start.  */
+-  set_marker_both (w->start, w->contents, charpos, bytepos);
++  set_marker_both (w->start, w->contents, charpos);
+ 
+   /* The window start was calculated with an iterator already adjusted
+      by the existing vscroll, so w->start must not be combined with
+@@ -7546,7 +7544,7 @@ DEFUN ("move-to-window-line", Fmove_to_window_line, Smove_to_window_line,
+     {
+       int height = window_internal_height (w);
+       Fvertical_motion (make_fixnum (- (height / 2)), window, Qnil);
+-      set_marker_both (w->start, w->contents, PT, PT_BYTE);
++      set_marker_both (w->start, w->contents, PT);
+       w->start_at_line_beg = !NILP (Fbolp ());
+       w->force_start = true;
+ 
+@@ -7799,8 +7797,7 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
+ 	  w = XWINDOW (selected_window);
+ 	  set_marker_both (w->pointm,
+ 			   w->contents,
+-			   BUF_PT (XBUFFER (w->contents)),
+-			   BUF_PT_BYTE (XBUFFER (w->contents)));
++			   BUF_PT (XBUFFER (w->contents)));
+ 	}
+ 
+       fset_redisplay (f);
+@@ -7937,17 +7934,15 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
+ 	    {
+ 	      /* Set window markers at start of visible range.  */
+ 	      if (XMARKER (w->start)->buffer == 0)
+-		set_marker_restricted_both (w->start, w->contents, 0, 0);
++		set_marker_restricted_both (w->start, w->contents, 0);
+ 	      if (XMARKER (w->pointm)->buffer == 0)
+ 		set_marker_restricted_both
+ 		  (w->pointm, w->contents,
+-		   BUF_PT (XBUFFER (w->contents)),
+-		   BUF_PT_BYTE (XBUFFER (w->contents)));
++		   BUF_PT (XBUFFER (w->contents)));
+ 	      if (XMARKER (w->old_pointm)->buffer == 0)
+ 		set_marker_restricted_both
+ 		  (w->old_pointm, w->contents,
+-		   BUF_PT (XBUFFER (w->contents)),
+-		   BUF_PT_BYTE (XBUFFER (w->contents)));
++		   BUF_PT (XBUFFER (w->contents)));
+ 	      w->start_at_line_beg = true;
+ 	      if (FUNCTIONP (window_restore_killed_buffer_windows)
+ 		  && !MINI_WINDOW_P (w))
+@@ -7968,9 +7963,9 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
+ 	      window_discard_buffer_from_window (w->contents, window, false);
+ 	      /* This will set the markers to beginning of visible
+ 		 range.  */
+-	      set_marker_restricted_both (w->start, w->contents, 0, 0);
+-	      set_marker_restricted_both (w->pointm, w->contents, 0, 0);
+-	      set_marker_restricted_both (w->old_pointm, w->contents, 0, 0);
++	      set_marker_restricted_both (w->start, w->contents, 0);
++	      set_marker_restricted_both (w->pointm, w->contents, 0);
++	      set_marker_restricted_both (w->old_pointm, w->contents, 0);
+ 	      w->start_at_line_beg = true;
+ 	      if (!MINI_WINDOW_P (w))
+ 		{
+@@ -8329,8 +8324,7 @@ save_window_save (Lisp_Object window, struct Lisp_Vector *vector, ptrdiff_t i)
+ 	     the buffer; pointm is garbage in the selected window.  */
+ 	  if (EQ (window, selected_window))
+ 	    p->pointm = build_marker (XBUFFER (w->contents),
+-				      BUF_PT (XBUFFER (w->contents)),
+-				      BUF_PT_BYTE (XBUFFER (w->contents)));
++				      BUF_PT (XBUFFER (w->contents)));
+ 	  else
+ 	    p->pointm = Fcopy_marker (w->pointm, Qnil);
+ 	  p->old_pointm = Fcopy_marker (w->old_pointm, Qnil);
+diff --git a/src/xdisp.c b/src/xdisp.c
+index 7913af42812..c07d392aebe 100644
+--- a/src/xdisp.c
++++ b/src/xdisp.c
+@@ -12047,8 +12047,8 @@ DEFUN ("buffer-text-pixel-size", Fbuffer_text_pixel_size, Sbuffer_text_pixel_siz
+   if (!EQ (buffer, w->contents))
+     {
+       wset_buffer (w, buffer);
+-      set_marker_both (w->pointm, buffer, BEG, BEG_BYTE);
+-      set_marker_both (w->old_pointm, buffer, BEG, BEG_BYTE);
++      set_marker_both (w->pointm, buffer, BEG);
++      set_marker_both (w->old_pointm, buffer, BEG);
+     }
+ 
+   value = window_text_pixel_size (window, Qnil, Qnil, x_limit, y_limit, Qnil,
+@@ -12224,11 +12224,11 @@ message_dolog (const char *m, ptrdiff_t nbytes, bool nlflag, bool multibyte)
+       bset_cache_long_scans (current_buffer, Qnil);
+ 
+       oldpoint = message_dolog_marker1;
+-      set_marker_restricted_both (oldpoint, Qnil, PT, PT_BYTE);
++      set_marker_restricted_both (oldpoint, Qnil, PT);
+       oldbegv = message_dolog_marker2;
+-      set_marker_restricted_both (oldbegv, Qnil, BEGV, BEGV_BYTE);
++      set_marker_restricted_both (oldbegv, Qnil, BEGV);
+       oldzv = message_dolog_marker3;
+-      set_marker_restricted_both (oldzv, Qnil, ZV, ZV_BYTE);
++      set_marker_restricted_both (oldzv, Qnil, ZV);
+ 
+       if (PT == Z)
+ 	point_at_end = 1;
+@@ -12802,8 +12802,8 @@ with_echo_area_buffer (struct window *w, int which,
+   if (w)
+     {
+       wset_buffer (w, buffer);
+-      set_marker_both (w->pointm, buffer, BEG, BEG_BYTE);
+-      set_marker_both (w->old_pointm, buffer, BEG, BEG_BYTE);
++      set_marker_both (w->pointm, buffer, BEG);
++      set_marker_both (w->old_pointm, buffer, BEG);
+     }
+ 
+   bset_undo_list (current_buffer, Qt);
+@@ -12891,14 +12891,11 @@ unwind_with_echo_area_buffer (Lisp_Object vector)
+ 
+       wset_buffer (w, buffer);
+       set_marker_restricted_both (w->pointm, buffer,
+-				  XFIXNAT (AREF (vector, 5)),
+-				  XFIXNAT (AREF (vector, 6)));
++				  XFIXNAT (AREF (vector, 5)));
+       set_marker_restricted_both (w->old_pointm, buffer,
+-				  XFIXNAT (AREF (vector, 7)),
+-				  XFIXNAT (AREF (vector, 8)));
++				  XFIXNAT (AREF (vector, 7)));
+       set_marker_restricted_both (w->start, buffer,
+-				  XFIXNAT (AREF (vector, 9)),
+-				  XFIXNAT (AREF (vector, 10)));
++				  XFIXNAT (AREF (vector, 9)));
+     }
+ 
+   Vwith_echo_area_save_vector = vector;
+@@ -13133,8 +13130,7 @@ resize_mini_window (struct window *w, bool exact_p)
+   /* By default, start display at the beginning.  */
+   if (redisplay_adhoc_scroll_in_resize_mini_windows)
+     set_marker_both (w->start, w->contents,
+-		     BUF_BEGV (XBUFFER (w->contents)),
+-		     BUF_BEGV_BYTE (XBUFFER (w->contents)));
++		     BUF_BEGV (XBUFFER (w->contents)));
+ 
+   /* Nil means don't try to resize.  */
+   if ((NILP (Vresize_mini_windows)
+@@ -13789,7 +13785,7 @@ format_mode_line_unwind_data (struct frame *target_frame,
+ 	 unwinding (Bug#32777).  */
+       ASET (vector, 10, buffer);
+       current_buffer = b;
+-      ASET (vector, 11, build_marker (current_buffer, PT, PT_BYTE));
++      ASET (vector, 11, build_marker (current_buffer, PT));
+       current_buffer = cb;
+     }
+ 
+@@ -20418,13 +20414,13 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
+ 	{
+ 	  new_pt = BEGV;
+ 	  new_pt_byte = BEGV_BYTE;
+-	  set_marker_both (w->pointm, Qnil, BEGV, BEGV_BYTE);
++	  set_marker_both (w->pointm, Qnil, BEGV);
+ 	}
+       else if (new_pt > (ZV - 1))
+ 	{
+ 	  new_pt = ZV;
+ 	  new_pt_byte = ZV_BYTE;
+-	  set_marker_both (w->pointm, Qnil, ZV, ZV_BYTE);
++	  set_marker_both (w->pointm, Qnil, ZV);
+ 	}
+ 
+       /* We don't use SET_PT so that the point-motion hooks don't run.  */
+@@ -20684,7 +20680,7 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
+ 			    MATRIX_ROW_START_BYTEPOS (row));
+ 
+ 	  if (w != XWINDOW (selected_window))
+-	    set_marker_both (w->pointm, Qnil, PT, PT_BYTE);
++	    set_marker_both (w->pointm, Qnil, PT);
+ 	  else if (current_buffer == old)
+ 	    SET_TEXT_POS (lpoint, PT, PT_BYTE);
+ 
+@@ -21053,7 +21049,7 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
+   /* Set the window start position here explicitly, to avoid an
+      infinite loop in case the functions in window-scroll-functions
+      get errors.  */
+-  set_marker_both (w->start, Qnil, IT_CHARPOS (it), IT_BYTEPOS (it));
++  set_marker_both (w->start, Qnil, IT_CHARPOS (it));
+ 
+   /* Run scroll hooks.  */
+   startp = run_window_scroll_functions (window, it.current.pos);
+@@ -21475,7 +21471,7 @@ try_window (Lisp_Object window, struct text_pos pos, int flags)
+   int cursor_vpos = w->cursor.vpos;
+ 
+   /* Make POS the new window start.  */
+-  set_marker_both (w->start, Qnil, CHARPOS (pos), BYTEPOS (pos));
++  set_marker_both (w->start, Qnil, CHARPOS (pos));
+ 
+   /* Mark cursor position as unknown.  No overlay arrow seen.  */
+   w->cursor.vpos = -1;
+diff --git a/test/src/text-index-tests.el b/test/src/text-index-tests.el
+new file mode 100644
+index 00000000000..b5cd4f7c8b8
+--- /dev/null
++++ b/test/src/text-index-tests.el
+@@ -0,0 +1,95 @@
++;;; text-index-tests.el --- tests for src/text-index.c  -*- lexical-binding:t -*-
++
++;; Copyright (C) 2025 Free Software Foundation, Inc.
++
++;; This file is part of GNU Emacs.
++
++;; GNU Emacs is free software: you can redistribute it and/or modify
++;; it under the terms of the GNU General Public License as published by
++;; the Free Software Foundation, either version 3 of the License, or
++;; (at your option) any later version.
++
++;; GNU Emacs is distributed in the hope that it will be useful,
++;; but WITHOUT ANY WARRANTY; without even the implied warranty of
++;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++;; GNU General Public License for more details.
++
++;; You should have received a copy of the GNU General Public License
++;; along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.
++
++;;; Commentary:
++
++;;; Code:
++
++(require 'ert)
++(require 'ert-x)
++(require 'cl-lib)
++
++;; Note that the tests can be quite expensive on large files because of
++;; the calls to 'text-index--charpos-to-bytepos-brute' which always
++;; scans the text from the beginning.
++
++(defvar text-index-small-test-files
++  (list (expand-file-name "HELLO" data-directory)
++        (expand-file-name "src/buffer.c" source-directory)))
++
++(defvar text-index-big-test-files
++  (list (expand-file-name "src/buffer.c" source-directory)))
++
++(defvar text-index-all-test-files
++  (append text-index-small-test-files
++          text-index-big-test-files))
++
++(cl-defun test-check-charpos (charpos)
++  (let* ((real-bytepos (text-index--charpos-to-bytepos-brute charpos))
++         (index-bytepos (text-index--charpos-to-bytepos charpos))
++         (index-charpos (and index-bytepos
++                             (text-index--bytepos-to-charpos real-bytepos))))
++    (cond ((not (eq real-bytepos index-bytepos))
++           (message "Different bytepos at charpos %d (real %S index %S)"
++                    charpos real-bytepos index-bytepos)
++           nil)
++          ((and index-charpos
++                (not (eq index-charpos charpos)))
++           (message "Different charpos at bytepos %S (charpos %S index %S)"
++                    real-bytepos charpos index-charpos)
++           nil)
++          (t t))))
++
++(cl-defmacro text-index-with-buffer ((file) &rest body)
++  (declare (indent 1))
++  `(ert-with-test-buffer ()
++     (insert-file-contents ,file)
++     (progn ,@body)))
++
++(ert-deftest text-index-test-forward ()
++  (cl-loop for file in text-index-small-test-files do
++           (text-index-with-buffer (file)
++             (cl-loop for charpos from (point-min) below (point-max) do
++                      (should (test-check-charpos charpos))))))
++
++(ert-deftest text-index-test-backward ()
++  (cl-loop for file in text-index-small-test-files do
++           (text-index-with-buffer (file)
++             (cl-loop for charpos from (point-max) downto (point-min) do
++                      (should (test-check-charpos charpos))))))
++
++(ert-deftest text-index-test-random-charpos ()
++  (cl-loop for file in text-index-all-test-files do
++           (text-index-with-buffer (file)
++             (cl-loop repeat 10000 do
++                      (should (test-check-charpos (random (point-max))))))))
++
++(defvar text-index-test-strings
++  ["1" "💡" "💡3" "💡💡" "💡💡5"])
++
++(ert-deftest text-index-test-random-insert ()
++  (cl-loop for file in text-index-all-test-files do
++           (text-index-with-buffer (file)
++             (cl-loop repeat 10000
++	              for charpos = (1+ (random (buffer-size)))
++	              for string = (aref text-index-test-strings
++                                         (random (length text-index-test-strings)))
++	              do (progn (goto-char charpos)
++		                (insert string)
++		                (test-check-charpos (random (point-max))))))))
+-- 
+2.52.0.windows.1
+

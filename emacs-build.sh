@@ -225,7 +225,7 @@ function action2.1_build ()
 
     echo Building Emacs in directory $emacs_build_dir
 
-    make -j $emacs_build_threads -C $emacs_build_dir && return 0
+    make --trace -j $emacs_build_threads -C $emacs_build_dir && return 0
 
     echo Build process failed
     return 1
@@ -251,7 +251,7 @@ function action2.2_install ()
         # standalone Emacs build process. This is weird, but means
         # we have to copy it by hand.
 
-        make -j $emacs_build_threads -C $emacs_build_dir install \
+        make --trace -j $emacs_build_threads -C $emacs_build_dir install \
             && cp "${mingw_dir}bin/libgmp"*.dll "$emacs_install_dir/bin/" \
             && rm -f "$emacs_install_dir/bin/emacs-"*.exe \
             && emacs_build_strip_exes "$emacs_install_dir" \

@@ -1,0 +1,25 @@
+From 35119d23e7e27a25be9adaca5e244e6825c3de0d Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Mon, 29 Sep 2025 00:45:22 -0700
+Subject: [PATCH] w32-nt: add libxml2-16.dll to dynamic-library-alist
+
+---
+ lisp/term/w32-nt.el | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lisp/term/w32-nt.el b/lisp/term/w32-nt.el
+index 7ff947283..e40afcb7c 100644
+--- a/lisp/term/w32-nt.el
++++ b/lisp/term/w32-nt.el
+@@ -101,7 +101,7 @@
+        (if (>= libgnutls-version 30400)
+ 	   '(gnutls "libgnutls-30.dll")
+ 	 '(gnutls "libgnutls-28.dll" "libgnutls-26.dll"))
+-       '(libxml2 "libxml2-2.dll" "libxml2.dll")
++       '(libxml2 "libxml2-16.dll" "libxml2-2.dll" "libxml2.dll")
+        '(zlib "zlib1.dll" "libz-1.dll")
+        '(lcms2 "liblcms2-2.dll")
+        '(gccjit "libgccjit-0.dll")
+-- 
+2.51.0.windows.1
+

@@ -55,7 +55,7 @@ jobs:
           - os: windows-2025
             shell: powershell
             msystem: UCRT64
-            build_options: --variant mps --with-rsvg --with-mps --no-strip --enable-build-details
+            build_options: --variant mps --with-rsvg --with-mps --enable-build-details
           - os: ubuntu-latest
             shell: bash
             build_options: --with-rsvg --with-mps --without-xwidgets

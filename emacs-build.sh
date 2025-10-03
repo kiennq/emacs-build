@@ -406,6 +406,7 @@ lib_inclusions="
 advapi32
 gcc\.a
 gcc_
+hunspell-
 kernel32
 mingw32
 mingwex
@@ -425,6 +426,7 @@ ebrowse
 emacs
 emacsclient
 etags
+hunspell
 ld
 objdump
 gzip
@@ -439,7 +441,7 @@ $build_type
 etc
 lib/((?!emacs)(?!gcc)(?![^/]*\.(a|o)$))
 lib/.*\.exe
-.*share/((?!licenses))
+.*share/((?!licenses)(?!hunspell))
 usr/lib/cmake
 usr/lib/gettext
 usr/lib/pkgconfig
@@ -452,7 +454,7 @@ var
 "
 
 packing_slim_exclusion="
-.*share/((?!emacs)(?!icons)(?!info)(?!licenses))
+.*share/((?!emacs)(?!icons)(?!info)(?!licenses)(?!hunspell))
 .*share/emacs/.*/lisp/play
 "
 

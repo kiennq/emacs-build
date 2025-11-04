@@ -1,0 +1,25 @@
+From eea81a8fc54175619c26764d03951e4be11e474d Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Tue, 4 Nov 2025 00:17:12 -0800
+Subject: [PATCH] loaddefs-generate: use member-ignore-case for Windows
+
+---
+ lisp/emacs-lisp/loaddefs-gen.el | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lisp/emacs-lisp/loaddefs-gen.el b/lisp/emacs-lisp/loaddefs-gen.el
+index c8e05921f..a7b90caaf 100644
+--- a/lisp/emacs-lisp/loaddefs-gen.el
++++ b/lisp/emacs-lisp/loaddefs-gen.el
+@@ -657,7 +657,7 @@ instead of just updating them with the new/changed autoloads."
+                                 (file-attributes file))))
+           ;; If we're scanning for package versions, we want to look
+           ;; at the file even if it's excluded.
+-          (let* ((excluded (member (expand-file-name file dir) excluded-files))
++          (let* ((excluded (member-ignore-case (expand-file-name file dir) excluded-files))
+                  (package-data
+                   (and include-package-version (if excluded 'only t))))
+             (when (or package-data (not excluded))
+-- 
+2.51.2.windows.1
+

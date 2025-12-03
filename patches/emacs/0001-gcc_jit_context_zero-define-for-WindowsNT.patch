@@ -1,0 +1,59 @@
+From 96f9eaa5b95e50ec202fbcc6d37e15fd571ad54d Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Wed, 3 Dec 2025 09:58:20 -0800
+Subject: [PATCH] gcc_jit_context_zero: define for WindowsNT
+
+---
+ src/comp.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/comp.c b/src/comp.c
+index bc8e30c479e..d55d53d6a1c 100644
+--- a/src/comp.c
++++ b/src/comp.c
+@@ -71,8 +71,8 @@
+ #undef gcc_jit_context_get_type
+ #undef gcc_jit_context_new_array_access
+ #undef gcc_jit_context_new_array_type
+-#undef gcc_jit_context_new_bitcast
+ #undef gcc_jit_context_new_binary_op
++#undef gcc_jit_context_new_bitcast
+ #undef gcc_jit_context_new_call
+ #undef gcc_jit_context_new_call_through_ptr
+ #undef gcc_jit_context_new_cast
+@@ -95,6 +95,7 @@
+ #undef gcc_jit_context_set_int_option
+ #undef gcc_jit_context_set_logfile
+ #undef gcc_jit_context_set_str_option
++#undef gcc_jit_context_zero
+ #undef gcc_jit_function_get_param
+ #undef gcc_jit_function_new_block
+ #undef gcc_jit_function_new_local
+@@ -271,6 +272,8 @@ DEF_DLL_FN (void, gcc_jit_context_set_logfile,
+ DEF_DLL_FN (void, gcc_jit_context_set_str_option,
+ 	    (gcc_jit_context *ctxt, enum gcc_jit_str_option opt,
+ 	     const char *value));
++DEF_DLL_FN (gcc_jit_rvalue *, gcc_jit_context_zero,
++            (gcc_jit_context *ctxt, gcc_jit_type *numeric_type));
+ DEF_DLL_FN (void, gcc_jit_struct_set_fields,
+             (gcc_jit_struct *struct_type, gcc_jit_location *loc, int num_fields,
+              gcc_jit_field **fields));
+@@ -334,6 +337,7 @@ init_gccjit_functions (void)
+   LOAD_DLL_FN (library, gcc_jit_context_set_int_option);
+   LOAD_DLL_FN (library, gcc_jit_context_set_logfile);
+   LOAD_DLL_FN (library, gcc_jit_context_set_str_option);
++  LOAD_DLL_FN (library, gcc_jit_context_zero);
+   LOAD_DLL_FN (library, gcc_jit_function_get_param);
+   LOAD_DLL_FN (library, gcc_jit_function_new_block);
+   LOAD_DLL_FN (library, gcc_jit_function_new_local);
+@@ -415,6 +419,7 @@ #define gcc_jit_context_set_bool_option fn_gcc_jit_context_set_bool_option
+ #define gcc_jit_context_set_int_option fn_gcc_jit_context_set_int_option
+ #define gcc_jit_context_set_logfile fn_gcc_jit_context_set_logfile
+ #define gcc_jit_context_set_str_option fn_gcc_jit_context_set_str_option
++#define gcc_jit_context_zero fn_gcc_jit_context_zero
+ #define gcc_jit_function_get_param fn_gcc_jit_function_get_param
+ #define gcc_jit_function_new_block fn_gcc_jit_function_new_block
+ #define gcc_jit_function_new_local fn_gcc_jit_function_new_local
+-- 
+2.52.0.windows.1
+

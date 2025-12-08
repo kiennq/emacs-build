@@ -65,6 +65,7 @@ jobs:
     env:
       MSYS2_DIR: C:\msys64
       EMACS_REPO: ${{ needs.prepare_env.outputs.repo }}
+      EMACS_COMMIT: ${{ needs.prepare_env.outputs.commit }}
       EMACS_PKG_VERSION: ${{ needs.prepare_env.outputs.pkg_version }}
       EMACS_CERT_SECRET: ${{ secrets.EMACS_CERT_SECRET }}
 
@@ -87,7 +88,7 @@ jobs:
       # This is the shortest job, but in this case it pulls all MSYS/MINGW64
       - name: Clone Emacs
         if: runner.os == 'Windows'
-        run: .\emacs-build.cmd --clone --repo https://github.com/kiennq/emacs.git --branch ${{ needs.prepare_env.outputs.commit }}
+        run: .\emacs-build.cmd --clone --repo $env:EMACS_REPO --branch $env:EMACS_COMMIT
 
       - name: Clone Emacs
         if: runner.os != 'Windows'
@@ -95,7 +96,7 @@ jobs:
           mkdir -p ./git/emacs
           cd ./git/emacs/
           git clone --filter=tree:0 --no-checkout $EMACS_REPO .
-          git checkout ${{ needs.prepare_env.outputs.commit }}
+          git checkout $EMACS_COMMIT
 
       - name: Install deps
         if: runner.os == 'Windows'
@@ -111,7 +112,7 @@ jobs:
         if: runner.os == 'Windows'
         # Require --with-* flags, else the deps will not be included properly
         run: |
-          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --configure --build-dev ${{ matrix.build_options }}
+          .\emacs-build.cmd --slim --branch $env:EMACS_COMMIT --configure --build-dev ${{ matrix.build_options }}
 
       # - name: Install winget
       #   if: runner.os == 'Windows'
@@ -127,7 +128,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           $env:MSIXHeroCLI = &where.exe MSIXHeroCLI
-          .\emacs-build.cmd --slim --branch ${{ needs.prepare_env.outputs.commit }} --msix --pack-all ${{ matrix.build_options }}
+          .\emacs-build.cmd --slim --branch $env:EMACS_COMMIT --msix --pack-all ${{ matrix.build_options }}
 
       - name: Build and pack Emacs
         if: runner.os != 'Windows'

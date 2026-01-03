@@ -69,26 +69,26 @@ function check_mingw_architecture ()
     case "$MSYSTEM" in
         MINGW32)    architecture=i686
                     mingw_prefix="mingw-w64-$architecture"
-                    build_type="i686-w64-mingw32"
+                    mingw_chost="i686-w64-mingw32"
                     ;;
         MINGW64)    architecture=x86_64
                     mingw_prefix="mingw-w64-$architecture"
-                    build_type="x86_64-w64-mingw32"
+                    mingw_chost="x86_64-w64-mingw32"
                     ;;
         UCRT64)     architecture=ucrt-x86_64
                     mingw_prefix="mingw-w64-$architecture"
-                    build_type="x86_64-w64-mingw32"
+                    mingw_chost="x86_64-w64-mingw32"
                     ;;
         CLANGARM64) architecture=clang-aarch64
                     mingw_prefix="mingw-w64-$architecture"
-                    build_type="x86_64-w64-mingw32"
+                    mingw_chost="aarch64-w64-mingw32"
                     ;;
         MSYS)       echo This tool cannot be ran from an MSYS shell.
-                    echo Please open a Ucrt64/Mingw64/Mingw32 terminal.
+                    echo Please open a Ucrt64/Mingw64/Mingw32/ClangArm64 terminal.
                     echo
                     exit -1
                     ;;
-        *)          echo This tool must be run from a Ucrt64/Mingw64/Mingw32 terminal.
+        *)          echo This tool must be run from a Ucrt64/Mingw64/Mingw32/ClangArm64 terminal.
                     echo
                     exit -1
     esac
@@ -98,20 +98,11 @@ function ensure_mingw_build_software ()
 {
     echo Install essential packages
     local build_packages="git zip unzip base-devel ${mingw_prefix}-toolchain autoconf automake"
-    pacman --noprogressbar --noconfirm --needed -S $build_packages >/dev/null 2>&1
+    pacman --noprogressbar --noconfirm --needed -S $build_packages
     if test "$?" != 0; then
         echo Unable to install $build_packages
         echo Giving up
         exit -1
-    fi
-    if [ -z "`which git 2>&1`" ]; then
-        echo Installing Git for MSYS2
-        pacman -S --noconfirm --needed git
-        if test "$?" != 0; then
-            echo Unable to install Git
-            echo Giving up
-            exit -1
-        fi
     fi
 }
 
@@ -171,8 +162,10 @@ function emacs_configure_build_dir ()
     done
 
     echo Configuring Emacs with options
-    echo   "$emacs_source_dir/configure" "--prefix=$emacs_install_dir" CFLAGS="$CFLAGS" $options
-    if "$emacs_source_dir/configure" "--prefix=$emacs_install_dir" CFLAGS="$CFLAGS" $options; then
+    echo   "$emacs_source_dir/configure" --prefix="${emacs_install_dir}" --host=$mingw_chost --build=$mingw_chost CFLAGS="$CFLAGS" $options
+    if "$emacs_source_dir/configure" --prefix="${emacs_install_dir}" \
+                                     --host=$mingw_chost --build=$mingw_chost \
+                                     CFLAGS="$CFLAGS" $options; then
         echo Emacs configured
     else
         echo Configuration failed
@@ -418,7 +411,7 @@ user32
 "
 
 exe_inclusions="
-$build_type-
+$mingw_chost-
 addpm
 as
 ctags
@@ -433,7 +426,7 @@ gzip
 "
 
 dependency_slim_exclusions="
-$build_type
+$mingw_chost
 .*bin/(`echo $exe_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*\.exe$
 .*doc
 .*include
@@ -484,12 +477,13 @@ emacs_build_zip_dir="$emacs_build_root/zips"
 emacs_strip_executables="no"
 emacs_pkg_var=""
 
+export LDFLAGS="${LDFLAGS} -lpthread"
 # CFLAGS="-Ofast -fno-finite-math-only \
 #         -fassociative-math -fno-signed-zeros -frename-registers -funroll-loops \
 #         -fomit-frame-pointer \
 #         -fallow-store-data-races  -fno-semantic-interposition -floop-parallelize-all -ftree-parallelize-loops=4 \
 #         -g -pipe"
-CFLAGS="-O2 -fno-semantic-interposition -floop-parallelize-all -ftree-parallelize-loops=4 -g -pipe $CFLAGS"
+CFLAGS="-O2 -fno-semantic-interposition -g $CFLAGS"
 
 while test -n "$*"; do
     case $1 in

@@ -1,0 +1,251 @@
+From 22792e29ea2591477c9217021907cc8feed55229 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 2 Jan 2026 20:20:35 -0800
+Subject: [PATCH] mps: add build config for w3a6ll
+
+---
+ mps/code/comm.gmk    |  2 ++
+ mps/code/mps.c       | 14 ++++++++++
+ mps/code/mpstd.h     | 16 ++++++++++++
+ mps/code/prmcw3a6.c  | 52 +++++++++++++++++++++++++++++++++++++
+ mps/code/w3a6ll.gmk  | 62 ++++++++++++++++++++++++++++++++++++++++++++
+ mps/configure.ac     | 10 ++++++-
+ mps/manual/build.txt |  1 +
+ 7 files changed, 156 insertions(+), 1 deletion(-)
+ create mode 100644 mps/code/prmcw3a6.c
+ create mode 100644 mps/code/w3a6ll.gmk
+
+diff --git a/mps/code/comm.gmk b/mps/code/comm.gmk
+index 488d28ff1..3d8ee374e 100644
+--- a/mps/code/comm.gmk
++++ b/mps/code/comm.gmk
+@@ -170,6 +170,8 @@ ifeq ($(PFM),w3i3gc)
+ TESTTHR = testthrw3.c
+ else ifeq ($(PFM),w3i6gc)
+ TESTTHR = testthrw3.c
++else ifeq ($(PFM),w3a6ll)
++TESTTHR = testthrw3.c
+ else
+ TESTTHR = testthrix.c
+ endif
+diff --git a/mps/code/mps.c b/mps/code/mps.c
+index d9485c17e..851cf7ba4 100644
+--- a/mps/code/mps.c
++++ b/mps/code/mps.c
+@@ -256,6 +256,20 @@
+ #include "spw3i6.c"     /* Windows on x86-64 stack probe */
+ #include "mpsiw3.c"     /* Windows interface layer extras */
+ 
++/* Windows on ARM64 with Clang/LLVM */
++
++#elif defined(MPS_PF_W3A6LL)
++
++#include "lockw3.c"     /* Windows locks */
++#include "thw3.c"       /* Windows threading */
++#include "vmw3.c"       /* Windows virtual memory */
++#include "protw3.c"     /* Windows protection */
++#include "prmcanan.c"   /* generic architecture mutator context */
++#include "prmcw3.c"     /* Windows mutator context */
++#include "prmcw3a6.c"   /* Windows on ARM64 mutator context */
++#include "spw3i6.c"     /* Windows stack probe */
++#include "mpsiw3.c"     /* Windows interface layer extras */
++
+ /* Cygwin on x86-64 built with GCC */
+ 
+ #elif defined(MPS_PF_CYI6GC)
+diff --git a/mps/code/mpstd.h b/mps/code/mpstd.h
+index 25520f878..034b53127 100644
+--- a/mps/code/mpstd.h
++++ b/mps/code/mpstd.h
+@@ -423,6 +423,22 @@ #define MPS_WORD_WIDTH  64
+ #define MPS_WORD_SHIFT  6
+ #define MPS_PF_ALIGN    16
+ 
++#elif defined(__MINGW64__) && defined(__aarch64__) && defined(__GNUC__) \
++      && defined(__clang__)
++#     if defined(CONFIG_PF_STRING) && ! defined(CONFIG_PF_W3A6LL)
++#           error "specified CONFIG_PF_... inconsistent with detected w3a6ll"
++#     endif
++#define MPS_PF_W3A6LL
++#define MPS_PF_STRING   "w3a6ll"
++#define MPS_OS_W3
++#define MPS_ARCH_A6
++#define MPS_BUILD_LL
++#define MPS_T_WORD      unsigned __int64
++#define MPS_T_ULONGEST  unsigned __int64
++#define MPS_WORD_WIDTH  64
++#define MPS_WORD_SHIFT  6
++#define MPS_PF_ALIGN    16
++
+ 
+ /* GCC 12.4.0, gcc -E -dM */
+ 
+diff --git a/mps/code/prmcw3a6.c b/mps/code/prmcw3a6.c
+new file mode 100644
+index 000000000..000d3c0b3
+--- /dev/null
++++ b/mps/code/prmcw3a6.c
+@@ -0,0 +1,52 @@
++/* prmcw3a6.c: MUTATOR CONTEXT ARM64 (Windows)
++ *
++ * $Id$
++ * Copyright (c) 2026 Ravenbrook Limited.  See end of file for license.
++ */
++
++#include "prmcw3.h"
++
++SRCID(prmcw3a6, "$Id$");
++
++#if !defined(MPS_OS_W3) || !defined(MPS_ARCH_A6)
++#error "prmcw3a6.c is specific to MPS_OS_W3 and MPS_ARCH_A6"
++#endif
++
++
++Addr MutatorContextSP(MutatorContext context)
++{
++  AVERT(MutatorContext, context);
++  AVER(context->var == MutatorContextTHREAD);
++
++  return (Addr)context->the.context.Sp;
++}
++
++
++/* C. COPYRIGHT AND LICENSE
++ *
++ * Copyright (C) 2026 Ravenbrook Limited <https://www.ravenbrook.com/>.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met:
++ *
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the
++ *    distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
++ * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
++ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
++ * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
+diff --git a/mps/code/w3a6ll.gmk b/mps/code/w3a6ll.gmk
+new file mode 100644
+index 000000000..10b0626cb
+--- /dev/null
++++ b/mps/code/w3a6ll.gmk
+@@ -0,0 +1,62 @@
++# -*- makefile -*-
++#
++# w3a6ll.gmk: BUILD FOR Windows/ARM64/MinGW-Clang PLATFORM
++#
++# $Id$
++# Copyright (c) 2001-2026 Ravenbrook Limited.  See end of file for license.
++
++PFM = w3a6ll
++
++MPMPF = \
++    lockw3.c \
++    mpsiw3.c \
++    prmcanan.c \
++    prmcw3.c \
++    prmcw3a6.c \
++    protw3.c \
++    spw3i6.c \
++    thw3.c \
++    vmw3.c
++
++# Must be before including comm.gmk, since it uses CFLAGS
++CFLAGS = -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast
++
++# Clang/LLVM compiler flags.
++include ll.gmk
++
++# MinGW produces .exe binaries.
++EXEEXT = .exe
++
++# Windows headers require extensions beyond strict C89.
++CFLAGSCOMPILERSTRICT := -std=gnu99 -pedantic
++
++include comm.gmk
++
++
++# C. COPYRIGHT AND LICENSE
++#
++# Copyright (C) 2001-2026 Ravenbrook Limited <https://www.ravenbrook.com/>.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met:
++#
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++#
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the
++#    distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+diff --git a/mps/configure.ac b/mps/configure.ac
+index 8e35329ec..b3715ff5e 100644
+--- a/mps/configure.ac
++++ b/mps/configure.ac
+@@ -180,6 +180,14 @@
+       PFMCFLAGS="$CFLAGS_GC"
+       EXEEXT=.exe
+     ;;
++  aarch64-*-mingw*/yes)
++      AC_MSG_RESULT([MinGW ARM64])
++      MPS_OS_NAME=w3
++      MPS_ARCH_NAME=a6
++      MPS_BUILD_NAME=ll
++      PFMCFLAGS="$CFLAGS_LL"
++      EXEEXT=.exe
++    ;;
+   x86_64-*-cygwin*/no)
+       AC_MSG_RESULT([Cygwin x86_64])
+       MPS_OS_NAME=cy
+@@ -189,7 +197,7 @@
+       EXEEXT=.exe
+     ;;
+     *)
+-    AC_MSG_ERROR([MPS does not support this platform out of the box.  See manual/build.txt])
++    AC_MSG_ERROR([MPS does not support this $host/$CLANG platform out of the box.  See manual/build.txt])
+ esac
+ 
+ AC_CHECK_PROGS([MAKE],[gnumake gmake make],[AC_MSG_ERROR([Unable to find a make program.])])
+diff --git a/mps/manual/build.txt b/mps/manual/build.txt
+index 16b26b382..36e439e89 100644
+--- a/mps/manual/build.txt
++++ b/mps/manual/build.txt
+@@ -182,6 +182,7 @@ Platform     OS          Architecture    Compiler      Makefile
+ ``lii6ll``   Linux       x86-64          Clang         ``lii6ll.gmk``
+ ``w3i3mv``   Windows     IA-32           Microsoft C   ``w3i3mv.nmk``
+ ``w3i6mv``   Windows     x86-64          Microsoft C   ``w3i6mv.nmk``
++``w3a6ll``   Windows     ARM64           Clang         ``w3a6ll.gmk``
+ ``xca6ll``   macOS       ARM64           Clang         ``mps.xcodeproj``
+ ``xci6ll``   macOS       x86-64          Clang         ``mps.xcodeproj``
+ ==========   =========   =============   ============  =================
+-- 
+2.52.0.windows.1
+

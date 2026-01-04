@@ -32,7 +32,7 @@ echo emacs_build_flags=$emacs_build_flags
 cd $emacs_src_dir
 
 render_libs="libtiff-dev librsvg2-dev libxpm-dev libjpeg-dev libpng-dev libgif-dev libgtk-3-dev libharfbuzz-dev"
-render_deps="libtiff5,librsvg2-2,libxpm4,libjpeg9,libgif7,libpng16-16,libgtk-3-0,libharfbuzz0b"
+render_deps="libtiff6,librsvg2-2,libxpm4,libjpeg9,libgif7,libpng16-16,libgtk-3-0,libharfbuzz0b"
 
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/ppa
 sudo apt update
@@ -44,16 +44,17 @@ export CC=/usr/bin/gcc-11 CXX=/usr/bin/gcc-11
 
 ./autogen.sh
 
-arch=$(dpkg-architecture -q DEB_BUILD_ARCH)
-# pkg_name=emacs-dev_${emacs_pkg_version}_$arch
+arch=$(dpkg-architecture -q DEB_HOST_ARCH)
+pkg_name=emacs-dev_${emacs_pkg_version}_$(dpkg-architecture -q DEB_HOST_MULTIARCH).deb
 deb_dir=$(pwd)/deb_pkg
 mkdir -p $deb_dir/usr/local/
 
 echo arch=$arch
 echo deb_dir=$deb_dir
-# echo pkg_name=$pkg_name
+echo pkg_name=$pkg_name
 
-./configure CFLAGS="-Ofast -fno-finite-math-only -fomit-frame-pointer" \
+export LDFLAGS="${LDFLAGS} -lpthread"
+./configure CFLAGS="-O2 -fno-semantic-interposition -g $CFLAGS" \
             --prefix=/usr/local/ \
             --with-included-regex --with-native-compilation \
             --with-small-ja-dic --with-x-toolkit=lucid --with-xwidgets $emacs_build_flags \
@@ -83,4 +84,4 @@ Description: GNU Emacs
 Depends: libgccjit0,libtree-sitter0,${render_deps}
 EOF
 
-dpkg-deb --build -z9 --root-owner-group $deb_dir $emacs_dest_dir
+dpkg-deb --build -z9 --root-owner-group $deb_dir $emacs_dest_dir/$pkg_name

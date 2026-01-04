@@ -128,7 +128,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/*{-full.zip,.deb,.msix}
+          file: ./zips/*{_full.zip,.msix}
           file_glob: true
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}
@@ -177,9 +177,9 @@ jobs:
 
       - name: Build and pack Emacs
         run: |
-          chmod 755 ./emacs-build-unix.sh
+          chmod 755 ./emacs-build-linux.sh
           mkdir -p ./zips
-          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips ${{ matrix.build_options }}
+          ./emacs-build-linux.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips ${{ matrix.build_options }}
 
       # Upload release for each build
       - name: Upload binaries to release
@@ -187,7 +187,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/*{-full.zip,.deb,.msix}
+          file: ./zips/*.deb
           file_glob: true
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}

@@ -26,7 +26,7 @@ jobs:
           cd ./git/emacs/
           git clone --depth 1 $EMACS_REPO .
           ts=`date +'%Y%m%d'`
-          commit=`git rev-parse --short=9 HEAD`
+          commit=`git rev-parse --short=8 HEAD`
           major_ver=`cat configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`
           version=`echo ${major_ver}.${{ github.run_number }}.${ts}.${commit}`
 
@@ -51,15 +51,15 @@ jobs:
           - os: windows-2025
             shell: powershell
             msystem: MINGW64
-            build_options: --with-rsvg --without-mps
+            build_options: --without-mps
           - os: windows-2025
             shell: powershell
             msystem: UCRT64
-            build_options: --variant mps --with-rsvg --with-mps --enable-build-details
+            build_options: --variant mps --with-mps --enable-build-details
           - os: windows-11-arm
             shell: powershell
             msystem: CLANGARM64
-            build_options: --variant mps --with-rsvg --with-mps --without-native-compilation
+            build_options: --without-native-compilation
 
     # The type of runner that the job will run on
     runs-on: ${{ matrix.os }}
@@ -128,7 +128,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/*{-full.zip,.deb,.msix}
+          file: ./zips/*{_full.zip,.msix}
           file_glob: true
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}
@@ -177,9 +177,9 @@ jobs:
 
       - name: Build and pack Emacs
         run: |
-          chmod 755 ./emacs-build-unix.sh
+          chmod 755 ./emacs-build-linux.sh
           mkdir -p ./zips
-          ./emacs-build-unix.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips ${{ matrix.build_options }}
+          ./emacs-build-linux.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips ${{ matrix.build_options }}
 
       # Upload release for each build
       - name: Upload binaries to release
@@ -187,7 +187,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/*{-full.zip,.deb,.msix}
+          file: ./zips/*.deb
           file_glob: true
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}

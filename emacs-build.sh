@@ -65,32 +65,23 @@ function write_version_number ()
 
 function check_mingw_architecture ()
 {
-    mingw_dir="/${MSYSTEM,,}/"
+    mingw_dir="${MINGW_PREFIX}/"
+    mingw_prefix="${MINGW_PACKAGE_PREFIX}"
+
     case "$MSYSTEM" in
         MINGW32)    architecture=i686
-                    mingw_prefix="mingw-w64-$architecture"
-                    mingw_chost="i686-w64-mingw32"
                     ;;
         MINGW64)    architecture=x86_64
-                    mingw_prefix="mingw-w64-$architecture"
-                    mingw_chost="x86_64-w64-mingw32"
                     ;;
         UCRT64)     architecture=ucrt-x86_64
-                    mingw_prefix="mingw-w64-$architecture"
-                    mingw_chost="x86_64-w64-mingw32"
                     ;;
         CLANGARM64) architecture=clang-aarch64
-                    mingw_prefix="mingw-w64-$architecture"
-                    mingw_chost="aarch64-w64-mingw32"
                     ;;
-        MSYS)       echo This tool cannot be ran from an MSYS shell.
+        *)          echo Current env is $MSYSTEM
                     echo Please open a Ucrt64/Mingw64/Mingw32/ClangArm64 terminal.
                     echo
                     exit -1
                     ;;
-        *)          echo This tool must be run from a Ucrt64/Mingw64/Mingw32/ClangArm64 terminal.
-                    echo
-                    exit -1
     esac
 }
 
@@ -162,9 +153,9 @@ function emacs_configure_build_dir ()
     done
 
     echo Configuring Emacs with options
-    echo   "$emacs_source_dir/configure" --prefix="${emacs_install_dir}" --host=$mingw_chost --build=$mingw_chost CFLAGS="$CFLAGS" $options
+    echo   "$emacs_source_dir/configure" --prefix="${emacs_install_dir}" --host=$MINGW_CHOST --build=$MINGW_CHOST CFLAGS="$CFLAGS" $options
     if "$emacs_source_dir/configure" --prefix="${emacs_install_dir}" \
-                                     --host=$mingw_chost --build=$mingw_chost \
+                                     --host=$MINGW_CHOST --build=$MINGW_CHOST \
                                      CFLAGS="$CFLAGS" $options; then
         echo Emacs configured
     else
@@ -411,7 +402,7 @@ user32
 "
 
 exe_inclusions="
-$mingw_chost-
+$MINGW_CHOST-
 addpm
 as
 ctags
@@ -426,7 +417,7 @@ gzip
 "
 
 dependency_slim_exclusions="
-$mingw_chost
+$MINGW_CHOST
 .*bin/(`echo $exe_inclusions | sed 's,\([^ \n]*\)[ \n]\?,(?!\1),g'`).*\.exe$
 .*doc
 .*include
@@ -497,7 +488,8 @@ while test -n "$*"; do
         --enable-*|--disable-*) emacs_build_options="$emacs_build_options $1";;
         --nativecomp-aot) export NATIVE_FULL_AOT=1;;
         --slim) add_all_features
-                # delete_feature cairo # We delete features here, so that user can repopulate them
+                # We delete features here, so that user can repopulate them
+                delete_feature cairo # cairo is not available on Windows
                 emacs_slim_build=yes
                 emacs_compress_files=yes
                 emacs_strip_executables=yes;;
@@ -521,7 +513,7 @@ while test -n "$*"; do
         --msix) emacs_pkg_msix=yes;;
         # --pack-all) add_actions action1_ensure_packages action2.2_install;;
 
-        --variant) shift; emacs_pkg_var="-$1";;
+        --variant) shift; emacs_pkg_var="_$1";;
 
         --pdf-tools) add_actions action2.2_install action3_pdf_tools;;
         --mu) add_actions action2.2_install action3_mu;;
@@ -564,16 +556,16 @@ if test "$emacs_branch_name" != "$emacs_branch"; then
 fi
 
 emacs_source_dir="$emacs_build_git_dir/$emacs_branch_name"
-emacs_build_dir="$emacs_build_build_dir/$emacs_branch_name-$architecture"
-emacs_install_dir="$emacs_build_install_dir/$emacs_branch_name-$architecture"
-emacs_full_install_dir="${emacs_install_dir}-full"
+emacs_build_dir="$emacs_build_build_dir/$emacs_branch_name-${mingw_prefix}"
+emacs_install_dir="$emacs_build_install_dir/$emacs_branch_name-${mingw_prefix}"
+emacs_full_install_dir="${emacs_install_dir}_full"
 
-emacs_pkg_prefix="emacs-${emacs_branch_name}-${architecture}${emacs_pkg_var}"
+emacs_pkg_prefix="${mingw_prefix}_emacs_${emacs_branch_name}${emacs_pkg_var}"
 
-emacs_nodepsfile="$emacs_build_root/zips/${emacs_pkg_prefix}-nodeps.zip"
-emacs_depsfile="$emacs_build_root/zips/${emacs_pkg_prefix}-deps.zip"
-emacs_distfile="$emacs_build_root/zips/${emacs_pkg_prefix}-full.zip"
-emacs_srcfile="$emacs_build_root/zips/emacs-${emacs_branch_name}-src.zip"
+emacs_nodepsfile="$emacs_build_root/zips/${emacs_pkg_prefix}_nodeps.zip"
+emacs_depsfile="$emacs_build_root/zips/${emacs_pkg_prefix}_deps.zip"
+emacs_distfile="$emacs_build_root/zips/${emacs_pkg_prefix}_full.zip"
+emacs_srcfile="$emacs_build_root/zips/emacs-${emacs_branch_name}_src.zip"
 emacs_dependencies=""
 
 for action in $actions; do
@@ -581,7 +573,7 @@ for action in $actions; do
         echo Action $action succeeded.
     else
         echo Action $action failed.
-        echo Aborting builds for branch $emacs_branch and architecture $architecture
+        echo Aborting builds for branch $emacs_branch and architecture ${architecture}
         exit -1
     fi
 done

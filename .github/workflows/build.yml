@@ -109,9 +109,9 @@ jobs:
       #   with:
       #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install MSIXHeroCLI
-        run: winget install msixhero --disable-interactivity --accept-source-agreements
-        continue-on-error: true
+      # - name: Install MSIXHeroCLI
+      #  run: winget install msixhero --disable-interactivity --accept-source-agreements
+      #  continue-on-error: true
 
       - name: Package Emacs
         run: |

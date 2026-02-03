@@ -1,0 +1,1584 @@
+From 8e3f353887205d82a4c6d248b912f4303539346f Mon Sep 17 00:00:00 2001
+From: ewantown <ewan@etown.dev>
+Date: Wed, 1 Oct 2025 10:24:35 -0700
+Subject: [PATCH] w32 virtual terminal color + tty-echo-cursor-flicker
+
+---
+ doc/emacs/cmdargs.texi  |  17 +-
+ doc/emacs/msdos.texi    |  27 ++
+ etc/NEWS                |  12 +
+ lisp/faces.el           |  12 +-
+ lisp/startup.el         |   2 +-
+ lisp/term/tty-colors.el |   4 +-
+ lisp/term/w32console.el | 148 ++++++---
+ src/dispnew.c           |  11 +-
+ src/term.c              |  51 +++-
+ src/termchar.h          |   2 +
+ src/w32console.c        | 644 +++++++++++++++++++++++++++++-----------
+ src/xdisp.c             |   2 +-
+ 12 files changed, 699 insertions(+), 233 deletions(-)
+
+diff --git a/doc/emacs/cmdargs.texi b/doc/emacs/cmdargs.texi
+index 3bcf49495..5a3c1c14a 100644
+--- a/doc/emacs/cmdargs.texi
++++ b/doc/emacs/cmdargs.texi
+@@ -1024,19 +1024,26 @@ Colors X
+ @itemx ansi8
+ Turn on the color support unconditionally, and use color commands
+ specified by the ANSI escape sequences for the 8 standard colors.
++@item 8bit
++Turn on support for 8-bit (256 color) display if available.
++Currently this option is effective on MS-Windows (10+) only.
++On other systems, maximal color support is enabled automatically.
++@item 24bit
++Turn on support for 24-bit (true color) display if available.
++Currently this option is effective on MS-Windows (10+) only.
++On other systems, 24-bit color is enabled automatically if supported.
+ @item @var{num}
+ Use color mode for @var{num} colors.  If @var{num} is @minus{}1, turn off
+ color support (equivalent to @samp{never}); if it is 0, use the
+ default color support for this terminal (equivalent to @samp{auto});
+ otherwise use an appropriate standard mode for @var{num} colors.
+ Depending on your terminal's capabilities, Emacs might be able to turn
+-on a color mode for 8, 16, 88, or 256 as the value of @var{num}.  If
+-there is no mode that supports @var{num} colors, Emacs acts as if
+-@var{num} were 0, i.e., it uses the terminal's default color support
+-mode.
++on a color mode for 8, 16, 88, 256, or 16777216 as the value of @var{num}.
++If there is no mode that supports @var{num} colors, Emacs acts as if
++@var{num} were 0, i.e., it uses the terminal's default color support mode.
+ @end table
+ 
+-This option has no effect on MS-Windows and MS-DOS.
++This option has no effect on MS-DOS, nor MS-Windows prior to Windows 10.
+ 
+ @cindex colors on character terminal, changing during session
+ @cindex character terminal, change color mode
+diff --git a/doc/emacs/msdos.texi b/doc/emacs/msdos.texi
+index 26b6ccbce..203df57c7 100644
+--- a/doc/emacs/msdos.texi
++++ b/doc/emacs/msdos.texi
+@@ -1200,6 +1200,33 @@ Windows Misc
+ directly or via @kbd{M-x customize-variable}, which lets you save the
+ customized value, see @ref{Saving Customizations}.
+ 
++@findex w32-use-virtual-terminal
++@cindex Windows Terminal, Windows Console, MS-Windows
++  The implementation of display functionality for Windows Console
++differs from the implementation for other terminal emulators,
++because historically, Windows required use of an idiosyncractic API.
++That API limited Windows Console display of Emacs to 16 basic colors.
++With the introduction of Windows Terminal, Microsoft implemented
++support for ANSI control sequences, modelled on the VT100 and Xterm,
++as well as 24-bit RBG color display.
++
++  The functions @code{w32-use-virtual-terminal} and
++@code{w32-use-virtual-terminal-p} can be used to set and inspect
++(respectively) an internal variable which determines whether this newer
++mechanism is used for display, or the older one.  The internal variable is
++automatically set based on your terminal's capabilities on startup.
++By default, 24-bit RGB color will be used, but other (8, 16, 256) color
++spaces may be used, by passing the @code{--color} command line argument,
++or setting the value of the @code{tty-color-mode} frame parameter.
++
++   @code{'(w32-use-virtual-terminal-p)} evaluates to @code{t} if and only if
++the internal variable has a non-zero numerical value, and otherwise to
++@code{nil}.  If it evaluates to @code{t}, ANSI escape sequences are used
++for color, otherwise, the older mechanism is used.  The internal variable
++can be set by evaluating @code{(w32-use-virtual-terminal x)}, where @code{x} is
++@code{t} or @code{nil}: if @code{x} is @code{t} and the feature is supported by
++your terminal, it will be enabled.  Otherwise, the feature will be disabled.
++
+ @ifnottex
+ @include msdos-xtra.texi
+ @end ifnottex
+diff --git a/etc/NEWS b/etc/NEWS
+index 3a9d5ef6f..8ca598c0d 100644
+--- a/etc/NEWS
++++ b/etc/NEWS
+@@ -4159,6 +4159,18 @@ Accordingly, we have revised our recommendations for a suitable DJGPP
+ toolchain to GCC 14.2.0 and Binutils 2.35.1 in lieu of GCC 3.4.x and
+ Binutils 2.26.
+ 
+++++
++** Windows Terminal can now display 256 and 24-bit RGB color.
++Previously, terminal sessions on Windows supported display of 16 colors.
++There is now support for 8-bit (256 color) and 24-bit RGB (true color).
++The new mechanism will be enabled automatically when supported.
++It defaults to 24-bit RGB color, but can be set to 8, 16, '8bit, or '24bit
++by passing the '--color' flag or setting the 'tty-color-mode' frame parameter.
++Use of the new mechanism is controlled by an internal variable that can be
++set and inspected via the functions 'w32-use-virtual-terminal' and
++'w32-use-virtual-terminal-p' (respectively).  See the manual entry specific
++to MS-Windows for more details.
++
+ 
+ ----------------------------------------------------------------------
+ This file is part of GNU Emacs.
+diff --git a/lisp/faces.el b/lisp/faces.el
+index eea1773a3..9252d96fb 100644
+--- a/lisp/faces.el
++++ b/lisp/faces.el
+@@ -2405,11 +2405,15 @@ tty-run-terminal-initialization
+ 
+ ;; Called from C function init_display to initialize faces of the
+ ;; dumped terminal frame on startup.
+-
++(declare-function w32-tty-setup-colors "term/w32console" ())
+ (defun tty-set-up-initial-frame-faces ()
+-  (let ((frame (selected-frame)))
+-    (frame-set-background-mode frame t)
+-    (face-set-after-frame-default frame)))
++  (progn
++    (when (and (eq system-type 'windows-nt)
++               (featurep 'term/w32console))
++      (w32-tty-setup-colors))
++    (let ((frame (selected-frame)))
++      (frame-set-background-mode frame t)
++      (face-set-after-frame-default frame))))
+ 
+ 
+ ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+diff --git a/lisp/startup.el b/lisp/startup.el
+index 6fa42026c..825edc6e5 100644
+--- a/lisp/startup.el
++++ b/lisp/startup.el
+@@ -958,7 +958,7 @@ tty-handle-args
+ 	       (push (cons 'tty-color-mode
+                            (cond
+                             ((numberp argval) argval)
+-                            ((string-match "-?[0-9]+" argval)
++                            ((string-match "-?[0-9]+$" argval)
+                              (string-to-number argval))
+                             (t (intern argval))))
+                      default-frame-alist))
+diff --git a/lisp/term/tty-colors.el b/lisp/term/tty-colors.el
+index 183464bef..a0450bc46 100644
+--- a/lisp/term/tty-colors.el
++++ b/lisp/term/tty-colors.el
+@@ -764,7 +764,9 @@ tty-color-mode-alist
+     (auto . 0)
+     (ansi8 . 8)
+     (always . 8)
+-    (yes . 8))
++    (yes . 8)
++    (8bit . 256)
++    (24bit . 16777216))
+   "An alist of supported standard tty color modes and their aliases.")
+ 
+ (defun tty-color-alist (&optional _frame)
+diff --git a/lisp/term/w32console.el b/lisp/term/w32console.el
+index 79b84a9f7..2985cf7e3 100644
+--- a/lisp/term/w32console.el
++++ b/lisp/term/w32console.el
+@@ -46,9 +46,77 @@ w32-tty-standard-colors
+ "A list of VGA console colors, their indices and 16-bit RGB values.")
+ 
+ (declare-function x-setup-function-keys "term/common-win" (frame))
+-(declare-function get-screen-color "w32console.c" ())
++(declare-function get-screen-color "w32console.c" (&optional vtp))
++(declare-function set-screen-color "w32console.c" (&optional vtp))
+ (declare-function w32-get-console-codepage "w32proc.c" ())
+ (declare-function w32-get-console-output-codepage "w32proc.c" ())
++(declare-function w32-use-virtual-terminal "w32console.c" (enable))
++(declare-function w32-use-virtual-terminal-p "w32console.c" ())
++
++(defun w32-tty-set-base-colors (vtp)
++  "Re-order `w32-tty-standard-colors' based on the value of VTP."
++  (let ((seq
++         (if vtp
++             '("black"     "red"          "green"      "brown"
++               "blue"      "magenta"      "cyan"       "lightgray"
++               "darkgray"  "lightred"     "lightgreen" "yellow"
++               "lightblue" "lightmagenta" "lightcyan"  "white")
++           '("black"     "blue"         "green"      "cyan"
++             "red"       "magenta"      "brown"      "lightgray"
++             "darkgray"  "lightblue"    "lightgreen" "lightcyan"
++             "lightred"  "lightmagenta" "yellow"     "white"))))
++    (setq w32-tty-standard-colors
++          (mapcar
++           (lambda (n) (let ((c (assoc n w32-tty-standard-colors)))
++                    (cons n (cons (seq-position seq n) (cddr c)))))
++           seq))))
++
++(defun w32-tty-define-base-colors ()
++  "Defines base 16-color space for w32 tty display."
++  (let* ((colors w32-tty-standard-colors)
++         (nbase (length colors))
++         (color (car colors)))
++    (progn (while colors
++             (tty-color-define (car color) (cadr color) (cddr color))
++             (setq colors (cdr colors)
++                   color  (car colors)))
++           nbase)))
++
++(defun w32-tty-define-8bit-colors ()
++  "Defines 8-bit color space for w32 tty display."
++  (let ((r 0) (b 0) (g 0)
++        (n (- 256 (w32-tty-define-base-colors)))
++        (convert-to-16bit (lambda (prim) (logior prim (ash prim 8)))))
++    (while (> n 24) ; non-grey
++      (let ((i (- 256 n))
++            (c (mapcar convert-to-16bit
++                       (mapcar (lambda (x) (if (zerop x) 0 (+ (* x 40) 55)))
++                               (list r g b)))))
++        (tty-color-define (format "color-%d" i) i c))
++      (setq b (1+ b))
++      (when (> b 5) (setq g (1+ g) b 0))
++      (when (> g 5) (setq r (1+ r) g 0))
++      (setq n (1- n)))
++    (while (> n 0) ; all-grey
++      (let* ((i (- 256 n))
++             (v (funcall convert-to-16bit (+ 8 (* (- 24 n) 10))))
++             (c (list v v v)))
++        (tty-color-define (format "color-%d" i) i c))
++      (setq n (1- n)))))
++
++(defun w32-tty-define-24bit-colors ()
++  "Defines 24-bit color space for w32 tty display."
++  (let ((i (w32-tty-define-base-colors)))
++    (mapc (lambda (c) (unless (assoc (car c) w32-tty-standard-colors)
++                   (tty-color-define (car c) i (cdr c))
++                   (setq i (1+ i))))
++          color-name-rgb-alist)))
++
++;; tty-color-define swaps indices for pixel values on 24bit display
++(defun w32-tty-get-pixel (index)
++  "Convert a legacy color INDEX (0..15) into a pixel value."
++  (let ((color (nth index w32-tty-standard-colors)))
++    (or (tty-color-24bit (cddr color)) index)))
+ 
+ (defun terminal-init-w32console ()
+   "Terminal initialization function for w32 console."
+@@ -56,43 +124,53 @@ terminal-init-w32console
+   (x-setup-function-keys (selected-frame))
+   ;; Set terminal and keyboard encodings to the current OEM codepage.
+   (let ((oem-code-page-coding
+-	 (intern (format "cp%d" (w32-get-console-codepage))))
+-	(oem-code-page-output-coding
+-	 (intern (format "cp%d" (w32-get-console-output-codepage))))
+-	oem-cs-p oem-o-cs-p)
+-	(setq oem-cs-p (coding-system-p oem-code-page-coding))
+-	(setq oem-o-cs-p (coding-system-p oem-code-page-output-coding))
+-	(when oem-cs-p
+-	  (set-keyboard-coding-system oem-code-page-coding)
+-	  (set-terminal-coding-system
+-	   (if oem-o-cs-p oem-code-page-output-coding oem-code-page-coding))
+-          ;; Since we changed the terminal encoding, we need to repeat
+-          ;; the test for Unicode quotes being displayable.
+-          (startup--setup-quote-display)))
+-  (let* ((colors w32-tty-standard-colors)
+-         (color (car colors)))
+-    (tty-color-clear)
+-    (while colors
+-      (tty-color-define (car color) (cadr color) (cddr color))
+-      (setq colors (cdr colors)
+-            color (car colors))))
+-  (clear-face-cache)
+-  ;; Figure out what are the colors of the console window, and set up
+-  ;; the background-mode correspondingly.
+-  (let* ((screen-color (get-screen-color))
+-	 (bg (cadr screen-color))
+-	 (descr (tty-color-by-index bg))
+-	 r g b bg-mode)
+-    (setq r (nth 2 descr)
+-	  g (nth 3 descr)
+-	  b (nth 4 descr))
+-    (if (< (+ r g b) (* .6 (+ 65535 65535 65535)))
+-	(setq bg-mode 'dark)
+-      (setq bg-mode 'light))
+-    (set-terminal-parameter nil 'background-mode bg-mode))
++         (intern (format "cp%d" (w32-get-console-codepage))))
++        (oem-code-page-output-coding
++         (intern (format "cp%d" (w32-get-console-output-codepage))))
++        oem-cs-p oem-o-cs-p)
++    (setq oem-cs-p (coding-system-p oem-code-page-coding))
++    (setq oem-o-cs-p (coding-system-p oem-code-page-output-coding))
++    (when oem-cs-p
++      (set-keyboard-coding-system oem-code-page-coding)
++      (set-terminal-coding-system
++       (if oem-o-cs-p oem-code-page-output-coding oem-code-page-coding))
++      ;; Since we changed the terminal encoding, we need to repeat
++      ;; the test for Unicode quotes being displayable.
++      (startup--setup-quote-display)))
+   (tty-set-up-initial-frame-faces)
+   (run-hooks 'terminal-init-w32-hook))
+ 
++;; Called from tty-set-up-initial-frame-faces in faces.el
++(defun w32-tty-setup-colors ()
++  "Set up color definitions and frame parameters for w32 tty display."
++  (tty-color-clear)
++  (let ((ncolors (display-color-cells))
++        (vtp (w32-use-virtual-terminal-p)))
++    (w32-tty-set-base-colors vtp)
++    (if vtp
++        (cond ((= ncolors 16777216) (w32-tty-define-24bit-colors))
++              ((= ncolors 256)      (w32-tty-define-8bit-colors))
++              (t                    (w32-tty-define-base-colors)))
++      (w32-tty-define-base-colors))
++    (clear-face-cache)
++    (let* ((screen-color (get-screen-color vtp))
++           (fg (car  screen-color))
++           (bg (cadr screen-color))
++           (bootstrap (and vtp (= ncolors 16777216)
++                           (< fg 16) (< bg 16) (not (= 0 fg bg))))
++           (fallback  (and vtp (< ncolors 16777216)
++                           (or (< ncolors fg) (< ncolors bg))))
++           (screen-color (if fallback (get-screen-color t) screen-color))
++           (fg (if bootstrap (w32-tty-get-pixel fg) (car  screen-color)))
++           (bg (if bootstrap (w32-tty-get-pixel bg) (cadr screen-color)))
++           (bg-col (tty-color-by-index bg))
++           (bg-dark (< (+ (nth 2 bg-col) (nth 3 bg-col) (nth 4 bg-col))
++                       (* .6 (+ 65535 65535 65535))))
++           (bg-mode (if bg-dark 'dark 'light)))
++      (set-terminal-parameter nil 'background-mode bg-mode)
++      (when (or bootstrap fallback)
++        (set-screen-color fg bg t)))))
++
+ (provide 'term/w32console)
+ 
+ ;;; w32console.el ends here
+diff --git a/src/dispnew.c b/src/dispnew.c
+index d976660db..ba623f385 100644
+--- a/src/dispnew.c
++++ b/src/dispnew.c
+@@ -5802,7 +5802,16 @@ write_matrix (struct frame *f, bool inhibit_id_p, bool updating_menu_p)
+      is done so that messages are made visible when pausing.  */
+   int last_row = f->desired_matrix->nrows - 1;
+   if (MATRIX_ROW_ENABLED_P (f->desired_matrix, last_row))
+-    write_row (f, last_row, updating_menu_p);
++    {
++      int cursor_hidden = (FRAME_TTY (f))->cursor_hidden;
++      if (!cursor_in_echo_area && !cursor_hidden)
++	tty_hide_cursor (FRAME_TTY (f));
++
++      write_row (f, last_row, updating_menu_p);
++
++      if (!cursor_in_echo_area && !cursor_hidden)
++	tty_show_cursor (FRAME_TTY (f));
++    }
+ 
+   if (first_row >= 0)
+     for (int i = first_row; i < last_row; ++i)
+diff --git a/src/term.c b/src/term.c
+index 6c2d8ac66..0e925163c 100644
+--- a/src/term.c
++++ b/src/term.c
+@@ -2208,7 +2208,7 @@ DEFUN ("tty-display-color-cells", Ftty_display_color_cells,
+   return make_fixnum (t ? t->display_info.tty->TN_max_colors : 0);
+ }
+ 
+-#if !defined DOS_NT && !defined HAVE_ANDROID
++#if !defined MSDOS && !defined HAVE_ANDROID
+ 
+ /* Declare here rather than in the function, as in the rest of Emacs,
+    to work around an HPUX compiler bug (?). See
+@@ -2247,7 +2247,7 @@ tty_default_color_capabilities (struct tty_display_info *tty, bool save)
+    MODE's value is generally the number of colors which we want to
+    support; zero means set up for the default capabilities, the ones
+    we saw at init_tty time; -1 means turn off color support.  */
+-static void
++void
+ tty_setup_colors (struct tty_display_info *tty, int mode)
+ {
+   /* Canonicalize all negative values of MODE.  */
+@@ -2270,6 +2270,10 @@ tty_setup_colors (struct tty_display_info *tty, int mode)
+ #ifdef TERMINFO
+ 	tty->TS_set_foreground = "\033[3%p1%dm";
+ 	tty->TS_set_background = "\033[4%p1%dm";
++#elif WINDOWSNT
++	tty->TS_orig_pair = "\x1b[39m\x1b[49m";
++	tty->TS_set_foreground = "\x1b[%lum";
++	tty->TS_set_background = "\x1b[%lum";
+ #else
+ 	tty->TS_set_foreground = "\033[3%dm";
+ 	tty->TS_set_background = "\033[4%dm";
+@@ -2277,6 +2281,26 @@ tty_setup_colors (struct tty_display_info *tty, int mode)
+ 	tty->TN_max_colors = 8;
+ 	tty->TN_no_color_video = 0;
+ 	break;
++#ifdef WINDOWSNT
++      case 16:
++	tty->TN_max_colors = 16;
++	tty->TS_set_foreground = "\x1b[%lum";
++	tty->TS_set_background = "\x1b[%lum";
++	tty->TN_no_color_video = 0;
++	break;
++      case 256:
++	tty->TN_max_colors = 256;
++	tty->TS_set_foreground = "\x1b[38;5;%lum";
++	tty->TS_set_background = "\x1b[48;5;%lum";
++	tty->TN_no_color_video = 0;
++	break;
++      case 16777216:
++	tty->TN_max_colors = 16777216;
++	tty->TS_set_foreground = "\x1b[38;2;%lu;%lu;%lum";
++	tty->TS_set_background = "\x1b[48;2;%lu;%lu;%lum";
++	tty->TN_no_color_video = 0;
++	break;
++#endif
+     }
+ }
+ 
+@@ -2313,7 +2337,7 @@ set_tty_color_mode (struct tty_display_info *tty, struct frame *f)
+     }
+ }
+ 
+-#endif /* !DOS_NT && !HAVE_ANDROID */
++#endif /* !MSDOS && !HAVE_ANDROID */
+ 
+ char *
+ tty_type_name (Lisp_Object terminal)
+@@ -4656,6 +4680,22 @@ init_tty (const char *name, const char *terminal_type, bool must_succeed)
+ 
+     initialize_w32_display (terminal, &width, &height);
+ 
++    tty->TN_no_color_video = 0;
++    tty->TN_max_colors = 16777216;
++    tty->TS_orig_pair = "\x1b[39m\x1b[49m";
++    tty->TS_set_foreground = "\x1b[38;2;%lu;%lu;%lum";
++    tty->TS_set_background = "\x1b[48;2;%lu;%lu;%lum";
++
++    /* Save default color capabilities */
++    tty_default_color_capabilities (tty, 1);
++
++    tty->TS_enter_bold_mode = "\x1b[1m";
++    tty->TS_enter_italic_mode = "\x1b[3m";
++    tty->TS_enter_strike_through_mode = "\x1b[9m";
++    tty->TS_enter_underline_mode = "\x1b[4m";
++    tty->TS_enter_reverse_mode = "\x1b[7m";
++    tty->TS_exit_attribute_mode = "\x1b[0m";
++
+     FrameRows (tty) = height;
+     FrameCols (tty) = width;
+     tty->specified_window = height;
+@@ -4701,7 +4741,6 @@ init_tty (const char *name, const char *terminal_type, bool must_succeed)
+      don't think we're losing anything by turning it off.  */
+   tty->line_ins_del_ok = 0;
+ 
+-  tty->TN_max_colors = 16;  /* Must be non-zero for tty-display-color-p.  */
+ #endif	/* DOS_NT */
+ 
+ #ifdef HAVE_GPM
+@@ -5217,11 +5256,11 @@ syms_of_term (void)
+   defsubr (&Stty_display_pixel_width);
+   defsubr (&Stty_display_pixel_height);
+ 
+-#if !defined DOS_NT && !defined HAVE_ANDROID
++#if !defined MSDOS && !defined HAVE_ANDROID
+   default_orig_pair = NULL;
+   default_set_foreground = NULL;
+   default_set_background = NULL;
+-#endif /* !DOS_NT && !HAVE_ANDROID */
++#endif /* !MSDOS && !HAVE_ANDROID */
+ 
+ #ifndef HAVE_ANDROID
+   encode_terminal_src = NULL;
+diff --git a/src/termchar.h b/src/termchar.h
+index 9d7c3a2a5..9a9001d5c 100644
+--- a/src/termchar.h
++++ b/src/termchar.h
+@@ -249,4 +249,6 @@ #define CURTTY() FRAME_TTY (SELECTED_FRAME())
+ extern Lisp_Object tty_handle_tab_bar_click (struct frame *, int, int, bool,
+ 					     struct input_event *);
+ 
++extern void tty_setup_colors (struct tty_display_info *tty, int mode);
++
+ #endif /* EMACS_TERMCHAR_H */
+diff --git a/src/w32console.c b/src/w32console.c
+index 98be290bc..6669b2466 100644
+--- a/src/w32console.c
++++ b/src/w32console.c
+@@ -1,4 +1,4 @@
+-/* Terminal hooks for GNU Emacs on the Microsoft Windows API.
++﻿/* Terminal hooks for GNU Emacs on the Microsoft Windows API.
+    Copyright (C) 1992, 1999, 2001-2026 Free Software Foundation, Inc.
+ 
+ This file is part of GNU Emacs.
+@@ -14,14 +14,16 @@
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+-along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
+ 
+ /*
+    Tim Fleehart (apollo@online.com)		1-17-92
+    Geoff Voelker (voelker@cs.washington.edu)	9-12-93
++   Ewan Townshend (ewan@etown.dev)              2025-08
++   * c. ~ 2025: 24bit RGB support in Windows (10+) Terminal
++   * https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
+ */
+ 
+-
+ #include <config.h>
+ 
+ #include <stdio.h>
+@@ -29,15 +31,15 @@
+ 
+ #include "lisp.h"
+ #include "coding.h"
+-#include "termchar.h"	/* for FRAME_TTY */
+-#include "dispextern.h"	/* for tty_defined_color */
++#include "dispextern.h" /* for tty_defined_color */
+ #include "menu.h"	/* for tty_menu_show */
+-#include "w32term.h"
++#include "termchar.h"	/* for FRAME_TTY */
+ #include "w32common.h"	/* for os_subtype */
+ #include "w32inevt.h"
++#include "w32term.h"
+ 
+ #ifdef WINDOWSNT
+-#include "w32.h"	/* for syms_of_ntterm */
++# include "w32.h" /* for syms_of_ntterm */
+ #endif
+ 
+ static void w32con_move_cursor (struct frame *f, int row, int col);
+@@ -45,33 +47,44 @@
+ static void w32con_clear_frame (struct frame *f);
+ static void w32con_clear_end_of_line (struct frame *f, int);
+ static void w32con_ins_del_lines (struct frame *f, int vpos, int n);
+-static void w32con_insert_glyphs (struct frame *f, struct glyph *start, int len);
+-static void w32con_write_glyphs (struct frame *f, struct glyph *string, int len);
++static void w32con_insert_glyphs (struct frame *f,
++				  struct glyph *start, int len);
++static void w32con_write_glyphs (struct frame *f,
++				 struct glyph *string, int len);
+ static void w32con_delete_glyphs (struct frame *f, int n);
+ static void w32con_reset_terminal_modes (struct terminal *t);
+ static void w32con_set_terminal_modes (struct terminal *t);
+-static void w32con_update_begin (struct frame * f);
+-static void w32con_update_end (struct frame * f);
++static void w32con_update_begin (struct frame *f);
++static void w32con_update_end (struct frame *f);
+ static WORD w32_face_attributes (struct frame *f, int face_id);
+-
+-static COORD	cursor_coords;
+-static HANDLE	prev_screen, cur_screen;
+-static WORD	char_attr_normal;
+-static DWORD	prev_console_mode;
++static int w32con_write_vt_seq (const char *);
++static void turn_on_face (struct frame *, int face_id);
++static void turn_off_face (struct frame *, int face_id);
++static COORD w32con_get_cursor_coords ();
++
++static COORD cursor_coords;
++static HANDLE prev_screen, cur_screen;
++static WORD char_attr_normal;
++static DWORD prev_console_mode;
++static int bg_normal;
++static int fg_normal;
+ 
+ static CONSOLE_CURSOR_INFO console_cursor_info;
+ #ifndef USE_SEPARATE_SCREEN
+ static CONSOLE_CURSOR_INFO prev_console_cursor;
+ #endif
+ 
+-extern HANDLE  keyboard_handle;
+-HANDLE  keyboard_handle;
++extern HANDLE keyboard_handle;
++HANDLE keyboard_handle;
+ int w32_console_unicode_input;
++extern int w32_use_virtual_terminal;
++int w32_use_virtual_terminal = 1;
++extern struct tty_display_info *current_tty;
++struct tty_display_info *current_tty = NULL;
+ 
+-
+-/* Setting this as the ctrl handler prevents emacs from being killed when
+-   someone hits ^C in a 'suspended' session (child shell).
+-   Also ignore Ctrl-Break signals.  */
++/* Setting this as the ctrl handler prevents emacs from being killed
++   when someone hits ^C in a 'suspended' session (child shell). Also
++   ignore Ctrl-Break signals.  */
+ 
+ BOOL ctrl_c_handler (unsigned long);
+ 
+@@ -83,6 +96,41 @@ ctrl_c_handler (unsigned long type)
+ 	  && (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT));
+ }
+ 
++#define DEFAULTP(p)                                              \
++  (p == FACE_TTY_DEFAULT_COLOR || p == FACE_TTY_DEFAULT_FG_COLOR \
++   || p == FACE_TTY_DEFAULT_BG_COLOR)
++
++#define SEQMAX 256 /* Arbitrary upper limit on VT sequence size */
++
++#define SSPRINTF(buf, i, sz, fmt, ...)                        \
++  do                                                          \
++    {                                                         \
++      eassert (*i < sz && sz <= SEQMAX);                      \
++      if (fmt && *i < sz && sz <= SEQMAX)                     \
++	*i += snprintf (buf + *i, sz - *i, fmt, __VA_ARGS__); \
++    }                                                         \
++  while (0)
++
++/* Writes virtual terminal sequence to screen */
++static int
++w32con_write_vt_seq (const char *seq)
++{
++  char buf[SEQMAX];
++  DWORD n = 0, k = 0;
++  SSPRINTF (buf, &n, SEQMAX, seq, NULL);
++  if (n)
++    WriteConsole (cur_screen, (LPCSTR) buf, n, &k, NULL);
++  return k;
++}
++
++static COORD
++w32con_get_cursor_coords ()
++{
++  CONSOLE_SCREEN_BUFFER_INFO info;
++  GetConsoleScreenBufferInfo (GetStdHandle (STD_OUTPUT_HANDLE),
++			      &info);
++  return info.dwCursorPosition;
++}
+ 
+ /* Move the cursor to (ROW, COL) on FRAME.  */
+ static void
+@@ -117,35 +165,38 @@ w32con_show_cursor (void)
+ w32con_clear_to_end (struct frame *f)
+ {
+   w32con_clear_end_of_line (f, FRAME_COLS (f) - 1);
+-  w32con_ins_del_lines (f, cursor_coords.Y, FRAME_TOTAL_LINES (f) - cursor_coords.Y - 1);
++  w32con_ins_del_lines (f, cursor_coords.Y,
++			FRAME_TOTAL_LINES (f) - cursor_coords.Y - 1);
+ }
+ 
+ /* Clear the frame.  */
+ static void
+ w32con_clear_frame (struct frame *f)
+ {
+-  COORD	     dest;
+-  int        n;
+-  DWORD      r;
++  COORD dest;
++  int n;
++  DWORD r;
+   CONSOLE_SCREEN_BUFFER_INFO info;
+ 
+-  GetConsoleScreenBufferInfo (GetStdHandle (STD_OUTPUT_HANDLE), &info);
++  GetConsoleScreenBufferInfo (GetStdHandle (STD_OUTPUT_HANDLE),
++			      &info);
+ 
+-  /* Remember that the screen buffer might be wider than the window.  */
++  /* Remember that the screen buffer might be wider than the window.
++   */
+   n = FRAME_TOTAL_LINES (f) * info.dwSize.X;
+   dest.X = dest.Y = 0;
+ 
+-  FillConsoleOutputAttribute (cur_screen, char_attr_normal, n, dest, &r);
++  FillConsoleOutputAttribute (cur_screen, char_attr_normal, n, dest,
++			      &r);
+   FillConsoleOutputCharacter (cur_screen, ' ', n, dest, &r);
+ 
+   w32con_move_cursor (f, 0, 0);
+ }
+ 
+-
+ static struct glyph glyph_base[80];
+ static struct glyph *glyphs = glyph_base;
+ static size_t glyphs_len = ARRAYELTS (glyph_base);
+-static BOOL  ceol_initialized = FALSE;
++static BOOL ceol_initialized = FALSE;
+ 
+ /* Clear from Cursor to end (what's "standout marker"?).  */
+ static void
+@@ -158,7 +209,8 @@ w32con_clear_end_of_line (struct frame *f, int end)
+     {
+       if (glyphs == glyph_base)
+ 	glyphs = NULL;
+-      glyphs = xrealloc (glyphs, FRAME_COLS (f) * sizeof (struct glyph));
++      glyphs
++	= xrealloc (glyphs, FRAME_COLS (f) * sizeof (struct glyph));
+       glyphs_len = FRAME_COLS (f);
+       ceol_initialized = FALSE;
+     }
+@@ -166,10 +218,10 @@ w32con_clear_end_of_line (struct frame *f, int end)
+     {
+       int i;
+       for (i = 0; i < glyphs_len; i++)
+-        {
++	{
+ 	  memcpy (&glyphs[i], &space_glyph, sizeof (struct glyph));
+ 	  glyphs[i].frame = NULL;
+-        }
++	}
+       ceol_initialized = TRUE;
+     }
+   w32con_write_glyphs (f, glyphs, end - cursor_coords.X);
+@@ -179,11 +231,11 @@ w32con_clear_end_of_line (struct frame *f, int end)
+ static void
+ w32con_ins_del_lines (struct frame *f, int vpos, int n)
+ {
+-  int	     i, nb;
++  int i, nb;
+   SMALL_RECT scroll;
+   SMALL_RECT clip;
+-  COORD	     dest;
+-  CHAR_INFO  fill;
++  COORD dest;
++  CHAR_INFO fill;
+ 
+   if (n < 0)
+     {
+@@ -210,44 +262,44 @@ w32con_ins_del_lines (struct frame *f, int vpos, int n)
+ 
+   /* Here we have to deal with a w32 console flake: If the scroll
+      region looks like abc and we scroll c to a and fill with d we get
+-     cbd... if we scroll block c one line at a time to a, we get cdd...
+-     Emacs expects cdd consistently... So we have to deal with that
+-     here... (this also occurs scrolling the same way in the other
+-     direction.  */
++     cbd... if we scroll block c one line at a time to a, we get
++     cdd... Emacs expects cdd consistently... So we have to deal with
++     that here... (this also occurs scrolling the same way in the
++     other direction.  */
+ 
+   if (n > 0)
+     {
+       if (scroll.Bottom < dest.Y)
+-        {
++	{
+ 	  for (i = scroll.Bottom; i < dest.Y; i++)
+-            {
++	    {
+ 	      w32con_move_cursor (f, i, 0);
+ 	      w32con_clear_end_of_line (f, FRAME_COLS (f));
+-            }
+-        }
++	    }
++	}
+     }
+   else
+     {
+       nb = dest.Y + (scroll.Bottom - scroll.Top) + 1;
+ 
+       if (nb < scroll.Top)
+-        {
++	{
+ 	  for (i = nb; i < scroll.Top; i++)
+-            {
++	    {
+ 	      w32con_move_cursor (f, i, 0);
+ 	      w32con_clear_end_of_line (f, FRAME_COLS (f));
+-            }
+-        }
++	    }
++	}
+     }
+ 
+   cursor_coords.X = 0;
+   cursor_coords.Y = vpos;
+ }
+ 
+-#undef	LEFT
+-#undef	RIGHT
+-#define	LEFT	1
+-#define	RIGHT	0
++#undef LEFT
++#undef RIGHT
++#define LEFT 1
++#define RIGHT 0
+ 
+ static void
+ scroll_line (struct frame *f, int dist, int direction)
+@@ -255,10 +307,11 @@ scroll_line (struct frame *f, int dist, int direction)
+   /* The idea here is to implement a horizontal scroll in one line to
+      implement delete and half of insert.  */
+   SMALL_RECT scroll, clip;
+-  COORD	     dest;
+-  CHAR_INFO  fill;
++  COORD dest;
++  CHAR_INFO fill;
+ 
+-  clip.Top = scroll.Top = clip.Bottom = scroll.Bottom = cursor_coords.Y;
++  clip.Top = scroll.Top = clip.Bottom = scroll.Bottom
++    = cursor_coords.Y;
+   clip.Left = 0;
+   clip.Right = FRAME_COLS (f);
+ 
+@@ -282,7 +335,6 @@ scroll_line (struct frame *f, int dist, int direction)
+   ScrollConsoleScreenBuffer (cur_screen, &scroll, &clip, dest, &fill);
+ }
+ 
+-
+ /* If start is zero insert blanks instead of a string at start ?. */
+ static void
+ w32con_insert_glyphs (struct frame *f, register struct glyph *start,
+@@ -290,11 +342,12 @@ w32con_insert_glyphs (struct frame *f, register struct glyph *start,
+ {
+   scroll_line (f, len, RIGHT);
+ 
+-  /* Move len chars to the right starting at cursor_coords, fill with blanks */
++  /* Move len chars to the right starting at cursor_coords, fill with
++   * blanks */
+   if (start)
+     {
+-      /* Print the first len characters of start, cursor_coords.X adjusted
+-	 by write_glyphs.  */
++      /* Print the first len characters of start, cursor_coords.X
++	 adjusted by write_glyphs.  */
+ 
+       w32con_write_glyphs (f, start, len);
+     }
+@@ -306,21 +359,24 @@ w32con_insert_glyphs (struct frame *f, register struct glyph *start,
+ 
+ static void
+ w32con_write_glyphs (struct frame *f, register struct glyph *string,
+-                     register int len)
++		     register int len)
+ {
+   DWORD r;
+-  WORD char_attr;
+   LPCSTR conversion_buffer;
+   struct coding_system *coding;
+ 
++  w32con_hide_cursor ();
++
+   if (len <= 0)
+     return;
+ 
+   /* If terminal_coding does any conversion, use it, otherwise use
+      safe_terminal_coding.  We can't use CODING_REQUIRE_ENCODING here
+      because it always return 1 if the member src_multibyte is 1.  */
+-  coding = (FRAME_TERMINAL_CODING (f)->common_flags & CODING_REQUIRE_ENCODING_MASK
+-	    ? FRAME_TERMINAL_CODING (f) : &safe_terminal_coding);
++  coding = (FRAME_TERMINAL_CODING (f)->common_flags
++		& CODING_REQUIRE_ENCODING_MASK
++	      ? FRAME_TERMINAL_CODING (f)
++	      : &safe_terminal_coding);
+   /* The mode bit CODING_MODE_LAST_BLOCK should be set to 1 only at
+      the tail.  */
+   coding->mode &= ~CODING_MODE_LAST_BLOCK;
+@@ -342,40 +398,58 @@ w32con_write_glyphs (struct frame *f, register struct glyph *string,
+ 
+       /* w32con_clear_end_of_line sets frame of glyphs to NULL.  */
+       struct frame *attr_frame = face_id_frame ? face_id_frame : f;
+-      /* Turn appearance modes of the face of the run on.  */
+-      char_attr = w32_face_attributes (attr_frame, face_id);
+ 
+       if (n == len)
+ 	/* This is the last run.  */
+ 	coding->mode |= CODING_MODE_LAST_BLOCK;
+-      conversion_buffer = (LPCSTR) encode_terminal_code (string, n, coding);
++      conversion_buffer
++	= (LPCSTR) encode_terminal_code (string, n, coding);
+       if (coding->produced > 0)
+ 	{
+-	  /* Compute the string's width on display by accounting for
+-	     character's width.  FIXME: this doesn't handle character
+-	     compositions.  */
+-	  ptrdiff_t ncols = strwidth (coding->source, coding->src_bytes);
+-	  /* Set the attribute for these characters.  */
+-	  if (!FillConsoleOutputAttribute (cur_screen, char_attr, ncols,
+-					   cursor_coords, &r))
++	  if (w32_use_virtual_terminal)
+ 	    {
+-	      printf ("Failed writing console attributes: %lu\n",
+-		      GetLastError ());
+-	      fflush (stdout);
++	      turn_on_face (f, face_id);
++	      WriteConsole (cur_screen, conversion_buffer,
++			    coding->produced, &r, NULL);
++	      turn_off_face (f, face_id);
++	      cursor_coords = w32con_get_cursor_coords ();
+ 	    }
+-
+-	  /* Write the characters.  */
+-	  if (!WriteConsoleOutputCharacter (cur_screen, conversion_buffer,
+-					    coding->produced, cursor_coords,
+-					    &r))
++	  else
+ 	    {
+-	      printf ("Failed writing console characters: %lu\n",
+-		      GetLastError ());
+-	      fflush (stdout);
+-	    }
++	      /* Account for character width.
++		 FIXME: this doesn't handle character compositions. */
++	      ptrdiff_t ncols
++		= strwidth (coding->source, coding->src_bytes);
++
++	      /* Turn appearance modes of the face of the run on.  */
++	      WORD char_attr
++		= w32_face_attributes (attr_frame, face_id);
++
++	      /* Set the attribute for these characters.  */
++	      if (!FillConsoleOutputAttribute (cur_screen, char_attr,
++					       ncols, cursor_coords,
++					       &r))
++		{
++		  printf ("Failed writing console attributes: %lu\n",
++			  GetLastError ());
++		  fflush (stdout);
++		}
+ 
+-	  cursor_coords.X += ncols;
+-	  w32con_move_cursor (f, cursor_coords.Y, cursor_coords.X);
++	      /* Write the characters.  */
++	      if (!WriteConsoleOutputCharacter (cur_screen,
++						conversion_buffer,
++						coding->produced,
++						cursor_coords, &r))
++		{
++		  printf ("Failed writing console characters: %lu\n",
++			  GetLastError ());
++		  fflush (stdout);
++		}
++
++	      cursor_coords.X += ncols;
++	      w32con_move_cursor (f, cursor_coords.Y,
++				  cursor_coords.X);
++	    }
+ 	}
+       len -= n;
+       string += n;
+@@ -384,58 +458,85 @@ w32con_write_glyphs (struct frame *f, register struct glyph *string,
+ 
+ /* Used for mouse highlight.  */
+ static void
+-w32con_write_glyphs_with_face (struct frame *f, register int x, register int y,
+-			       register struct glyph *string, register int len,
+-			       register int face_id)
++w32con_write_glyphs_with_face (struct frame *f, register int x,
++			       register int y,
++			       register struct glyph *string,
++			       register int len, register int face_id)
+ {
+   LPCSTR conversion_buffer;
+   struct coding_system *coding;
+ 
++  w32con_hide_cursor ();
++
+   if (len <= 0)
+     return;
+ 
+   /* If terminal_coding does any conversion, use it, otherwise use
+      safe_terminal_coding.  We can't use CODING_REQUIRE_ENCODING here
+      because it always return 1 if the member src_multibyte is 1.  */
+-  coding = (FRAME_TERMINAL_CODING (f)->common_flags & CODING_REQUIRE_ENCODING_MASK
+-	    ? FRAME_TERMINAL_CODING (f) : &safe_terminal_coding);
++  coding = (FRAME_TERMINAL_CODING (f)->common_flags
++		& CODING_REQUIRE_ENCODING_MASK
++	      ? FRAME_TERMINAL_CODING (f)
++	      : &safe_terminal_coding);
+   /* We are going to write the entire block of glyphs in one go, as
+      they all have the same face.  So this _is_ the last block.  */
+   coding->mode |= CODING_MODE_LAST_BLOCK;
+ 
+-  conversion_buffer = (LPCSTR) encode_terminal_code (string, len, coding);
++  conversion_buffer
++    = (LPCSTR) encode_terminal_code (string, len, coding);
+   if (coding->produced > 0)
+     {
+       DWORD filled, written;
+-      /* Compute the character attributes corresponding to the face.  */
+-      DWORD char_attr = w32_face_attributes (f, face_id);
+-      COORD start_coords;
+-      /* Compute the string's width on display by accounting for
+-	 character's width.  FIXME: this doesn't handle character
+-	 compositions.  */
+-      ptrdiff_t ncols = strwidth (coding->source, coding->src_bytes);
+-
+-      start_coords.X = x;
+-      start_coords.Y = y;
+-      /* Set the attribute for these characters.  */
+-      if (!FillConsoleOutputAttribute (cur_screen, char_attr, ncols,
+-				       start_coords, &filled))
+-	DebPrint (("Failed writing console attributes: %d\n", GetLastError ()));
++      if (w32_use_virtual_terminal)
++	{
++	  COORD saved_coords = cursor_coords;
++	  w32con_move_cursor (f, y, x);
++	  turn_on_face (f, face_id);
++	  WriteConsole (cur_screen, conversion_buffer,
++			coding->produced, &written, NULL);
++	  turn_off_face (f, face_id);
++	  w32con_move_cursor (f, saved_coords.Y, saved_coords.X);
++	}
+       else
+ 	{
+-	  /* Write the characters.  */
+-	  if (!WriteConsoleOutputCharacter (cur_screen, conversion_buffer,
+-					    coding->produced, start_coords,
+-					    &written))
+-	    DebPrint (("Failed writing console characters: %d\n",
++	  /* Compute the character attributes corresponding to the
++	   * face.  */
++	  DWORD char_attr = w32_face_attributes (f, face_id);
++	  COORD start_coords;
++
++	  start_coords.X = x;
++	  start_coords.Y = y;
++
++	  /* Account for character width.
++	     FIXME: this doesn't handle character compositions.  */
++	  ptrdiff_t ncols
++	    = strwidth (coding->source, coding->src_bytes);
++
++	  /* Set the attribute for these characters.  */
++	  if (!FillConsoleOutputAttribute (cur_screen, char_attr,
++					   ncols, start_coords,
++					   &filled))
++	    DebPrint (("Failed writing console attributes: %d\n",
+ 		       GetLastError ()));
++	  else
++	    {
++	      /* Write the characters.  */
++	      if (!WriteConsoleOutputCharacter (cur_screen,
++						conversion_buffer,
++						coding->produced,
++						start_coords,
++						&written))
++		DebPrint (("Failed writing console characters: %d\n",
++			   GetLastError ()));
++	    }
+ 	}
+     }
+ }
+ 
+ /* Implementation of draw_row_with_mouse_face for W32 console.  */
+ void
+-tty_draw_row_with_mouse_face (struct window *w, struct glyph_row *window_row,
++tty_draw_row_with_mouse_face (struct window *w,
++			      struct glyph_row *window_row,
+ 			      int window_start_x, int window_end_x,
+ 			      enum draw_glyphs_face draw)
+ {
+@@ -457,7 +558,8 @@ tty_draw_row_with_mouse_face (struct window *w, struct glyph_row *window_row,
+   int root_start_x, root_end_x, root_y;
+   root_xy (f, frame_start_x, frame_y, &root_start_x, &root_y);
+   root_xy (f, frame_end_x, frame_y, &root_end_x, &root_y);
+-  struct glyph_row *root_row = MATRIX_ROW (root->current_matrix, root_y);
++  struct glyph_row *root_row
++    = MATRIX_ROW (root->current_matrix, root_y);
+ 
+   /* Remember current cursor coordinates so that we can restore
+      them at the end.  */
+@@ -467,7 +569,7 @@ tty_draw_row_with_mouse_face (struct window *w, struct glyph_row *window_row,
+      write to the terminal what the window thinks should be drawn.
+      Instead, write only those parts that are not obscured by
+      other frames.  */
+-  for (int root_x = root_start_x; root_x < root_end_x; )
++  for (int root_x = root_start_x; root_x < root_end_x;)
+     {
+       /* Find the start of a run of glyphs from frame F.  */
+       struct glyph *root_start = root_row->glyphs[TEXT_AREA] + root_x;
+@@ -498,10 +600,12 @@ tty_draw_row_with_mouse_face (struct window *w, struct glyph_row *window_row,
+ 		case DRAW_MOUSE_FACE:
+ 		  {
+ 		    struct tty_display_info *tty = FRAME_TTY (f);
+-		    int face_id = tty->mouse_highlight.mouse_face_face_id;
+-		    w32con_write_glyphs_with_face (f, root_run_start_x, root_y,
+-						   root_start, nglyphs,
+-						   face_id);
++		    int face_id
++		      = tty->mouse_highlight.mouse_face_face_id;
++		    w32con_write_glyphs_with_face (f,
++						   root_run_start_x,
++						   root_y, root_start,
++						   nglyphs, face_id);
+ 		  }
+ 		  break;
+ 
+@@ -529,6 +633,35 @@ w32con_delete_glyphs (struct frame *f, int n)
+   scroll_line (f, n, LEFT);
+ }
+ 
++static void
++w32con_setup_virtual_terminal (void)
++{
++  /* Disable unless 24bit color is supported (v. > 10.0.15063).  */
++  w32_use_virtual_terminal
++    = w32_use_virtual_terminal
++      && (w32_major_version > 10
++	  || (w32_major_version == 10
++	      && (w32_minor_version > 0
++		  || w32_build_number > 15063)));
++
++  DWORD out_mode;
++  GetConsoleMode (cur_screen, &out_mode);
++  out_mode |= ENABLE_PROCESSED_OUTPUT;
++  out_mode |= DISABLE_NEWLINE_AUTO_RETURN;
++
++  if (w32_use_virtual_terminal)
++    out_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
++  else
++    out_mode &= ~ENABLE_VIRTUAL_TERMINAL_PROCESSING;
++
++  int out_mode_set = SetConsoleMode (cur_screen, out_mode);
++  w32_use_virtual_terminal = w32_use_virtual_terminal && out_mode_set;
++
++  int max_colors = w32_use_virtual_terminal ? 16777216 : 16;
++  tty_setup_colors (current_tty, max_colors);
++
++  safe_calln (Qtty_set_up_initial_frame_faces);
++}
+ 
+ static void
+ w32con_reset_terminal_modes (struct terminal *t)
+@@ -539,15 +672,16 @@ w32con_reset_terminal_modes (struct terminal *t)
+   DWORD r;
+ 
+   /* Clear the complete screen buffer.  This is required because Emacs
+-     sets the cursor position to the top of the buffer, but there might
+-     be other output below the bottom of the Emacs frame if the screen buffer
+-     is larger than the window size.  */
++     sets the cursor position to the top of the buffer, but there
++     might be other output below the bottom of the Emacs frame if the
++     screen buffer is larger than the window size.  */
+   GetConsoleScreenBufferInfo (cur_screen, &info);
+   dest.X = 0;
+   dest.Y = 0;
+   n = info.dwSize.X * info.dwSize.Y;
+ 
+-  FillConsoleOutputAttribute (cur_screen, char_attr_normal, n, dest, &r);
++  FillConsoleOutputAttribute (cur_screen, char_attr_normal, n, dest,
++			      &r);
+   FillConsoleOutputCharacter (cur_screen, ' ', n, dest, &r);
+   /* Now that the screen is clear, put the cursor at the top.  */
+   SetConsoleCursorPosition (cur_screen, dest);
+@@ -566,7 +700,8 @@ w32con_set_terminal_modes (struct terminal *t)
+ {
+   CONSOLE_CURSOR_INFO cci;
+ 
+-  /* make cursor big and visible (100 on Windows 95 makes it disappear)  */
++  /* make cursor big and visible (100 on Windows 95 makes it
++   * disappear)  */
+   cci.dwSize = 99;
+   cci.bVisible = TRUE;
+   (void) SetConsoleCursorInfo (cur_screen, &cci);
+@@ -576,28 +711,30 @@ w32con_set_terminal_modes (struct terminal *t)
+   /* If Quick Edit is enabled for the console, it will get in the way
+      of receiving mouse events, so we disable it.  But leave the
+      Insert Mode as it was set by the user.  */
+-  DWORD new_console_mode
+-    = ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS;
++  DWORD new_console_mode = ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT
++			   | ENABLE_EXTENDED_FLAGS;
+   if ((prev_console_mode & ENABLE_INSERT_MODE) != 0)
+     new_console_mode |= ENABLE_INSERT_MODE;
+   SetConsoleMode (keyboard_handle, new_console_mode);
+ 
+-  /* Initialize input mode: interrupt_input off, no flow control, allow
+-     8 bit character input, standard quit char.  */
++  /* Initialize input mode: interrupt_input off, no flow control,
++     allow 8 bit character input, standard quit char.  */
+   Fset_input_mode (Qnil, Qnil, make_fixnum (2), Qnil);
++  w32con_setup_virtual_terminal ();
+ }
+ 
+-/* hmmm... perhaps these let us bracket screen changes so that we can flush
+-   clumps rather than one-character-at-a-time...
++/* hmmm... perhaps these let us bracket screen changes so that we can
++   flush clumps rather than one-character-at-a-time...
+ 
+-   we'll start with not moving the cursor while an update is in progress.  */
++   we'll start with not moving the cursor while an update is in
++   progress.  */
+ static void
+-w32con_update_begin (struct frame * f)
++w32con_update_begin (struct frame *f)
+ {
+ }
+ 
+ static void
+-w32con_update_end (struct frame * f)
++w32con_update_end (struct frame *f)
+ {
+   SetConsoleCursorPosition (cur_screen, cursor_coords);
+   if (!XWINDOW (selected_window)->cursor_off_p
+@@ -626,13 +763,10 @@ sys_tgetstr (char *cap, char **area)
+   return NULL;
+ }
+ 
+-
+ /***********************************************************************
+ 			stubs from cm.c
+  ***********************************************************************/
+ 
+-extern struct tty_display_info *current_tty;
+-struct tty_display_info *current_tty = NULL;
+ extern int cost;
+ int cost = 0;
+ 
+@@ -680,7 +814,6 @@ Wcm_clear (struct tty_display_info *tty)
+ {
+ }
+ 
+-
+ /* Report the current cursor position.  The following two functions
+    are used in term.c's tty menu code, so they are not really
+    "stubs".  */
+@@ -700,7 +833,6 @@ cursorY (struct tty_display_info *tty)
+ 				Faces
+  ***********************************************************************/
+ 
+-
+ /* Turn appearances of face FACE_ID on tty frame F on.  */
+ 
+ static WORD
+@@ -712,10 +844,11 @@ w32_face_attributes (struct frame *f, int face_id)
+   char_attr = char_attr_normal;
+ 
+   /* Reverse the default color if requested. If background and
+-     foreground are specified, then they have been reversed already.  */
++     foreground are specified, then they have been reversed already.
++   */
+   if (face->tty_reverse_p)
+     char_attr = (char_attr & 0xff00) + ((char_attr & 0x000f) << 4)
+-      + ((char_attr & 0x00f0) >> 4);
++		+ ((char_attr & 0x00f0) >> 4);
+ 
+   /* Before the terminal is properly initialized, all colors map to 0.
+      Don't try to resolve them.  */
+@@ -736,6 +869,89 @@ w32_face_attributes (struct frame *f, int face_id)
+   return char_attr;
+ }
+ 
++static void
++turn_on_face (struct frame *f, int face_id)
++{
++  struct face *face = FACE_FROM_ID (f, face_id);
++  struct tty_display_info *tty = FRAME_TTY (f);
++  unsigned long fg = face->foreground;
++  unsigned long bg = face->background;
++
++  /* construct combined VT sequence for face attributes */
++  DWORD n = 0;
++  size_t sz = SEQMAX;
++  char seq[sz];
++  sz--;
++
++  if (face->tty_bold_p)
++    SSPRINTF (seq, &n, sz, tty->TS_enter_bold_mode, NULL);
++  if (face->tty_italic_p)
++    SSPRINTF (seq, &n, sz, tty->TS_enter_italic_mode, NULL);
++  if (face->tty_strike_through_p)
++    SSPRINTF (seq, &n, sz, tty->TS_enter_strike_through_mode, NULL);
++  if (face->underline != 0)
++    SSPRINTF (seq, &n, sz, tty->TS_enter_underline_mode, NULL);
++  /* Note: when face->tty_reverse_p != 0 and fg and bg are specified,
++     their values are already swapped and reversing them here would
++     swap them back, but we need to handle the reversal when
++     unspecified.  */
++  if (face->tty_reverse_p && DEFAULTP (fg) && DEFAULTP (bg))
++    SSPRINTF (seq, &n, sz, tty->TS_enter_reverse_mode, NULL);
++
++  if (DEFAULTP (fg))
++    fg = fg_normal;
++  if (DEFAULTP (bg))
++    bg = bg_normal;
++
++  const char *set_fg = tty->TS_set_foreground;
++  const char *set_bg = tty->TS_set_background;
++  if (tty->TN_max_colors == 8 || tty->TN_max_colors == 16)
++    {
++      /* fg and bg are indices into 16 base colors (see link at top).
++       */
++      unsigned long fgi = 0, bgi = 0;
++
++      fgi = (fg >= 0 && fg < 8)	   ? fg + 30
++	    : (fg >= 8 && fg < 16) ? fg - 8 + 90
++				   : 0;
++      if (fgi)
++	SSPRINTF (seq, &n, sz, set_fg, fgi);
++
++      bgi = (bg >= 0 && bg < 8)	   ? bg + 40
++	    : (bg >= 8 && bg < 16) ? bg - 8 + 100
++				   : 0;
++      if (bgi)
++	SSPRINTF (seq, &n, sz, set_bg, bgi);
++    }
++  else if (tty->TN_max_colors == 256)
++    {
++      /* fg and bg are xterm indices.  */
++      if (fg >= 0 && fg < 256)
++	SSPRINTF (seq, &n, sz, set_fg, fg);
++
++      if (bg >= 0 && bg < 256)
++	SSPRINTF (seq, &n, sz, set_bg, bg);
++    }
++  else if (tty->TN_max_colors == 16777216)
++    {
++      /* fg and bg are pixel values -- decompose to rgb triples.  */
++      unsigned long rf = fg / 65536, gf = (fg / 256) & 255,
++		    bf = fg & 255;
++      unsigned long rb = bg / 65536, gb = (bg / 256) & 255,
++		    bb = bg & 255;
++      SSPRINTF (seq, &n, sz, set_fg, rf, gf, bf);
++      SSPRINTF (seq, &n, sz, set_bg, rb, gb, bb);
++    }
++  w32con_write_vt_seq ((const char *) seq);
++}
++
++static void
++turn_off_face (struct frame *f, int face_id)
++{
++  struct tty_display_info *tty = FRAME_TTY (f);
++  w32con_write_vt_seq (tty->TS_exit_attribute_mode);
++}
++
+ /* The IME window is needed to receive the session notifications
+    required to reset the low level keyboard hook state.  */
+ 
+@@ -755,26 +971,27 @@ find_ime_window (HWND hwnd, LPARAM arg)
+ }
+ 
+ void
+-initialize_w32_display (struct terminal *term, int *width, int *height)
++initialize_w32_display (struct terminal *term, int *width,
++			int *height)
+ {
+-  CONSOLE_SCREEN_BUFFER_INFO	info;
++  CONSOLE_SCREEN_BUFFER_INFO info;
+ 
+   term->rif = 0; /* No window based redisplay on the console.  */
+-  term->cursor_to_hook		= w32con_move_cursor;
+-  term->raw_cursor_to_hook	= w32con_move_cursor;
+-  term->clear_to_end_hook	= w32con_clear_to_end;
+-  term->clear_frame_hook	= w32con_clear_frame;
+-  term->clear_end_of_line_hook	= w32con_clear_end_of_line;
+-  term->ins_del_lines_hook	= w32con_ins_del_lines;
+-  term->insert_glyphs_hook	= w32con_insert_glyphs;
+-  term->write_glyphs_hook	= w32con_write_glyphs;
+-  term->delete_glyphs_hook	= w32con_delete_glyphs;
+-  term->ring_bell_hook		= w32_sys_ring_bell;
++  term->cursor_to_hook = w32con_move_cursor;
++  term->raw_cursor_to_hook = w32con_move_cursor;
++  term->clear_to_end_hook = w32con_clear_to_end;
++  term->clear_frame_hook = w32con_clear_frame;
++  term->clear_end_of_line_hook = w32con_clear_end_of_line;
++  term->ins_del_lines_hook = w32con_ins_del_lines;
++  term->insert_glyphs_hook = w32con_insert_glyphs;
++  term->write_glyphs_hook = w32con_write_glyphs;
++  term->delete_glyphs_hook = w32con_delete_glyphs;
++  term->ring_bell_hook = w32_sys_ring_bell;
+   term->reset_terminal_modes_hook = w32con_reset_terminal_modes;
+-  term->set_terminal_modes_hook	= w32con_set_terminal_modes;
++  term->set_terminal_modes_hook = w32con_set_terminal_modes;
+   term->set_terminal_window_hook = NULL;
+-  term->update_begin_hook	= w32con_update_begin;
+-  term->update_end_hook		= w32con_update_end;
++  term->update_begin_hook = w32con_update_begin;
++  term->update_end_hook = w32con_update_end;
+ 
+   term->defined_color_hook = &tty_defined_color; /* xfaces.c */
+   term->read_socket_hook = w32_console_read_socket;
+@@ -808,14 +1025,14 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+   prev_screen = GetStdHandle (STD_OUTPUT_HANDLE);
+ 
+ #ifdef USE_SEPARATE_SCREEN
+-  cur_screen = CreateConsoleScreenBuffer (GENERIC_READ | GENERIC_WRITE,
+-					  0, NULL,
+-					  CONSOLE_TEXTMODE_BUFFER,
+-					  NULL);
++  cur_screen
++    = CreateConsoleScreenBuffer (GENERIC_READ | GENERIC_WRITE, 0,
++				 NULL, CONSOLE_TEXTMODE_BUFFER, NULL);
+ 
+   if (cur_screen == INVALID_HANDLE_VALUE)
+     {
+-      printf ("CreateConsoleScreenBuffer failed in initialize_w32_display\n");
++      printf ("CreateConsoleScreenBuffer failed in "
++	      "initialize_w32_display\n");
+       printf ("LastError = 0x%lx\n", GetLastError ());
+       fflush (stdout);
+       exit (1);
+@@ -827,8 +1044,8 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+ 
+   /* Respect setting of LINES and COLUMNS environment variables.  */
+   {
+-    char * lines = getenv ("LINES");
+-    char * columns = getenv ("COLUMNS");
++    char *lines = getenv ("LINES");
++    char *columns = getenv ("COLUMNS");
+ 
+     if (lines != NULL && columns != NULL)
+       {
+@@ -841,7 +1058,7 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+ 	GetConsoleScreenBufferInfo (cur_screen, &info);
+ 
+ 	/* Shrink the window first, so the buffer dimensions can be
+-           reduced if necessary.  */
++	   reduced if necessary.  */
+ 	new_win_dims.Top = 0;
+ 	new_win_dims.Left = 0;
+ 	new_win_dims.Bottom = min (new_size.Y, info.dwSize.Y) - 1;
+@@ -861,13 +1078,16 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+ 
+   if (!GetConsoleScreenBufferInfo (cur_screen, &info))
+     {
+-      printf ("GetConsoleScreenBufferInfo failed in initialize_w32_display\n");
++      printf ("GetConsoleScreenBufferInfo failed in "
++	      "initialize_w32_display\n");
+       printf ("LastError = 0x%lx\n", GetLastError ());
+       fflush (stdout);
+       exit (1);
+     }
+ 
+   char_attr_normal = info.wAttributes;
++  fg_normal = char_attr_normal & 0x000f;
++  bg_normal = (char_attr_normal >> 4) & 0x000f;
+ 
+   /* Determine if the info returned by GetConsoleScreenBufferInfo
+      is realistic.  Old MS Telnet servers used to only fill out
+@@ -888,14 +1108,15 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+ 
+   else if (w32_use_full_screen_buffer)
+     {
+-      *height = info.dwSize.Y;	/* lines per page */
+-      *width = info.dwSize.X;	/* characters per line */
++      *height = info.dwSize.Y; /* lines per page */
++      *width = info.dwSize.X;  /* characters per line */
+     }
+   else
+     {
+-      /* Lines per page.  Use buffer coords instead of buffer size.  */
++      /* Lines per page.  Use buffer coords instead of buffer size. */
+       *height = 1 + info.srWindow.Bottom - info.srWindow.Top;
+-      /* Characters per line.  Use buffer coords instead of buffer size.  */
++      /* Characters per line.  Use buffer coords instead of buffer
++       * size.  */
+       *width = 1 + info.srWindow.Right - info.srWindow.Left;
+     }
+ 
+@@ -917,40 +1138,103 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+   w32_initialize_display_info (build_string ("Console"));
+ 
+   HWND hwnd = NULL;
+-  EnumThreadWindows (GetCurrentThreadId (), find_ime_window, (LPARAM) &hwnd);
++  EnumThreadWindows (GetCurrentThreadId (), find_ime_window,
++		     (LPARAM) &hwnd);
+ 
+   /* Set up the keyboard hook.  */
+   /* setup_w32_kbdhook (hwnd); */
+-}
+ 
++  /* Set current_tty to the tty of this terminal */
++  current_tty = term->display_info.tty;
++}
+ 
+-DEFUN ("set-screen-color", Fset_screen_color, Sset_screen_color, 2, 2, 0,
++DEFUN ("set-screen-color", Fset_screen_color, Sset_screen_color, 2, 3, 0,
+        doc: /* Set screen foreground and background colors.
+ 
+-Arguments should be indices between 0 and 15, see w32console.el.  */)
+-  (Lisp_Object foreground, Lisp_Object background)
++Arguments should be indices for colors in the list returned by `tty-color-alist'.
++If VTP is non-nil, settings affect virtual terminal processing only.
++Otherwise, arguments should be between 0 and 15, and settings will
++be effective only when virtual terminal processing is disabled.
++
++See w32console.el and the documentation for `w32-use-virtual-terminal'.  */)
++(Lisp_Object foreground, Lisp_Object background, Lisp_Object vtp)
+ {
+-  char_attr_normal = XFIXNAT (foreground) + (XFIXNAT (background) << 4);
++  int fg = XFIXNAT (foreground);
++  int bg = XFIXNAT (background);
++
++  if (NILP (vtp))
++    {
++      char_attr_normal = fg + (bg << 4);
++    }
++  else
++    {
++      fg_normal = fg;
++      bg_normal = bg;
++    }
+ 
+   Frecenter (Qnil, Qt);
+   return Qt;
+ }
+ 
++DEFUN ("get-screen-color", Fget_screen_color, Sget_screen_color, 0, 1, 0,
++       doc: /* Get color indices of the current screen foreground and background.
++
++The colors are returned as a list of 2 indices (FOREGROUND BACKGROUND) for
++colors in the list returned by `tty-color-alist`.
++
++If VTP is non-nil, returns settings effective when virtual terminal
++processing is enabled.  Otherwise, returns settings effective when
++virtual terminal processing is disabled.
++
++See w32console.el and the documentation for `w32-use-virtual-terminal'.  */)
++(Lisp_Object vtp)
++{
++  int fg = NILP (vtp) ? char_attr_normal & 0x000f : fg_normal;
++  int bg = NILP (vtp) ? (char_attr_normal >> 4) & 0x000f : bg_normal;
++
++  return Fcons (make_fixnum (fg), Fcons (make_fixnum (bg), Qnil));
++}
++
++DEFUN (
++  "w32-use-virtual-terminal",
++  Fw32_use_virtual_terminal, Sw32_use_virtual_terminal, 1, 1, 0, doc:/* Enables (disables) virtual terminal sequence processing if argument is t (nil).  */)
++(Lisp_Object arg)
++{
++  if (EQ (arg, Qt))
++    w32_use_virtual_terminal = 1;
++  else if (EQ (arg, Qnil))
++    w32_use_virtual_terminal = 0;
++  else
++    {
++      error ("Invalid argument: expects t or nil.");
++      return Qnil;
++    }
++
++  w32con_setup_virtual_terminal ();
++  return Qt;
++}
++
++DEFUN (
++  "w32-use-virtual-terminal-p",
++  Fw32_use_virtual_terminal_p, Sw32_use_virtual_terminal_p, 0, 0, 0, doc:/* Returns t (nil) if virtual terminal sequence processing is enabled (disabled).  */)
++(void) { return w32_use_virtual_terminal ? Qt : Qnil; }
++
+ DEFUN ("get-screen-color", Fget_screen_color, Sget_screen_color, 0, 0, 0,
+        doc: /* Get color indices of the current screen foreground and background.
+ 
+ The colors are returned as a list of 2 indices (FOREGROUND BACKGROUND).
+ See w32console.el and `tty-defined-color-alist' for mapping of indices
+ to colors.  */)
+-  (void)
++(void)
+ {
+   return Fcons (make_fixnum (char_attr_normal & 0x000f),
+-		Fcons (make_fixnum ((char_attr_normal >> 4) & 0x000f), Qnil));
++		Fcons (make_fixnum ((char_attr_normal >> 4) & 0x000f),
++		       Qnil));
+ }
+ 
+ DEFUN ("set-cursor-size", Fset_cursor_size, Sset_cursor_size, 1, 1, 0,
+-       doc: /* Set cursor size.  */)
+-  (Lisp_Object size)
++       doc:/* Set cursor size.  */)
++(Lisp_Object size)
+ {
+   CONSOLE_CURSOR_INFO cci;
+   cci.dwSize = XFIXNAT (size);
+@@ -974,5 +1258,7 @@ syms_of_ntterm (void)
+ 
+   defsubr (&Sset_screen_color);
+   defsubr (&Sget_screen_color);
++  defsubr (&Sw32_use_virtual_terminal);
++  defsubr (&Sw32_use_virtual_terminal_p);
+   defsubr (&Sset_cursor_size);
+ }
+diff --git a/src/xdisp.c b/src/xdisp.c
+index 7ea027ae6..d93f02e56 100644
+--- a/src/xdisp.c
++++ b/src/xdisp.c
+@@ -17312,7 +17312,7 @@ redisplay_internal (void)
+ 	     area, displaying a different frame means redisplay the
+ 	     whole thing.  */
+ 	  SET_FRAME_GARBAGED (sf);
+-#if !defined DOS_NT && !defined HAVE_ANDROID
++#if !defined MSDOS && !defined HAVE_ANDROID
+ 	  set_tty_color_mode (FRAME_TTY (sf), sf);
+ #endif
+ 	}
+-- 
+2.52.0.windows.1
+

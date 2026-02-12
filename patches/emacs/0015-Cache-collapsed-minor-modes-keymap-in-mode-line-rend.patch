@@ -1,0 +1,57 @@
+From 8e6616bb3ddcdde9964e75b2f62e0dde15233f7e Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 12 Feb 2026 10:54:31 -0800
+Subject: [PATCH] Cache collapsed minor modes keymap in mode-line rendering
+
+---
+ lisp/bindings.el | 27 +++++++++++++++++++++++----
+ 1 file changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/lisp/bindings.el b/lisp/bindings.el
+index c0c2cf109..4659092de 100644
+--- a/lisp/bindings.el
++++ b/lisp/bindings.el
+@@ -514,6 +514,11 @@ mode-line--make-lighter-menu
+           (setq empty nil))))
+     (and (not empty) menu)))
+ 
++(defvar mode-line--collapse-keymap nil
++  "Cached keymap for collapsed minor mode indicator in the mode line.
++Reused across redisplay cycles to avoid recreating the keymap
++via `define-keymap' on every call to `mode-line--minor-modes'.")
++
+ (defun mode-line--minor-modes ()
+   "Compute mode line constructs for minor mode lighters."
+   (let (visible hidden)
+@@ -557,10 +562,24 @@ mode-line--minor-modes
+                           (popup-menu m e)
+                         (message "No menu available"))))
+                    (keymap
+-                    (define-keymap
+-                      :parent mode-line-minor-mode-keymap
+-                      "<mode-line> <down-mouse-1>" menu
+-                      "<mode-line> <mouse-2>" #'describe-mode)))
++                    ;; Reuse the cached keymap to avoid calling
++                    ;; `define-keymap' (which parses key strings via
++                    ;; `key-parse' / `key-valid-p') on every redisplay.
++                    ;; Only the menu command changes between calls;
++                    ;; use `define-key' directly to bypass key string
++                    ;; parsing overhead.
++                    (if mode-line--collapse-keymap
++                        (progn
++                          (define-key mode-line--collapse-keymap
++                                     [mode-line down-mouse-1] menu)
++                          mode-line--collapse-keymap)
++                      (let ((map (make-sparse-keymap)))
++                        (set-keymap-parent map
++                                          mode-line-minor-mode-keymap)
++                        (define-key map [mode-line down-mouse-1] menu)
++                        (define-key map [mode-line mouse-2]
++                                    #'describe-mode)
++                        (setq mode-line--collapse-keymap map)))))
+               `(:propertize mode-line-collapse-minor-modes-to
+                             mouse-face mode-line-highlight
+                             help-echo "Hidden minor modes\n\
+-- 
+2.51.1.windows.1
+

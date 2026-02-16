@@ -63,6 +63,7 @@ jobs:
 
     # The type of runner that the job will run on
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     env:
       EMACS_REPO: ${{ needs.prepare_env.outputs.repo }}
       EMACS_COMMIT: ${{ needs.prepare_env.outputs.commit }}
@@ -150,6 +151,7 @@ jobs:
 
     # The type of runner that the job will run on
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     env:
       EMACS_REPO: ${{ needs.prepare_env.outputs.repo }}
       EMACS_COMMIT: ${{ needs.prepare_env.outputs.commit }}

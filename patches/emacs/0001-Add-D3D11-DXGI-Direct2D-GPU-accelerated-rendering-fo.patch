@@ -1,0 +1,2770 @@
+From 632228c6a19cea8e611f9bea70b500f910c34d83 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Tue, 17 Feb 2026 01:47:54 -0800
+Subject: [PATCH] Add D3D11/DXGI/Direct2D GPU-accelerated rendering for W32
+
+---
+ configure.ac    |   3 +-
+ src/Makefile.in |   2 +-
+ src/emacs.c     |   1 +
+ src/w32d3d.c    | 717 ++++++++++++++++++++++++++++++++++++++++++++++++
+ src/w32d3d.h    | 111 ++++++++
+ src/w32dwrite.c |  74 ++++-
+ src/w32font.c   |  25 +-
+ src/w32font.h   |   4 +-
+ src/w32term.c   | 206 +++++++++++---
+ src/w32term.h   | 546 +++++++++++++++++++-----------------
+ src/w32xfns.c   | 239 +++++++++++-----
+ 11 files changed, 1548 insertions(+), 380 deletions(-)
+ create mode 100644 src/w32d3d.c
+ create mode 100644 src/w32d3d.h
+
+diff --git a/configure.ac b/configure.ac
+index 17514953b6..c7a0066252 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -3068,7 +3068,7 @@ AC_DEFUN
+   AC_CHECK_TOOL([WINDRES], [windres],
+                 [AC_MSG_ERROR([No resource compiler found.])])
+   W32_OBJ="w32fns.o w32menu.o w32reg.o w32font.o w32term.o"
+-  W32_OBJ="$W32_OBJ w32xfns.o w32select.o w32uniscribe.o w32dwrite.o w32cygwinx.o"
++  W32_OBJ="$W32_OBJ w32xfns.o w32select.o w32uniscribe.o w32dwrite.o w32d3d.o w32cygwinx.o"
+   EMACSRES="emacs.res"
+   case "$canonical" in
+     x86_64-*-*) EMACS_MANIFEST="emacs-x64.manifest" ;;
+@@ -3100,6 +3100,7 @@ AC_DEFUN
+     fi
+     W32_LIBS="$W32_LIBS -lwinmm -lgdi32 -lcomdlg32"
+     W32_LIBS="$W32_LIBS -lmpr -lwinspool -lole32 -lcomctl32"
++    W32_LIBS="$W32_LIBS -ld3d11 -ldxgi -ld2d1"
+     W32_RES_LINK="\$(EMACSRES)"
+     CLIENTRES="emacsclient.res"
+     CLIENTW="emacsclientw\$(EXEEXT)"
+diff --git a/src/Makefile.in b/src/Makefile.in
+index fa58e1cbd0..433b54f964 100644
+--- a/src/Makefile.in
++++ b/src/Makefile.in
+@@ -485,7 +485,7 @@ SOME_MACHINE_OBJECTS =
+   nsterm.o nsfns.o nsmenu.o nsselect.o nsimage.o nsfont.o macfont.o \
+   nsxwidget.o \
+   w32.o w32console.o w32cygwinx.o w32fns.o w32heap.o w32inevt.o w32notify.o \
+-  w32menu.o w32proc.o w32reg.o w32select.o w32term.o w32xfns.o \
++  w32menu.o w32proc.o w32reg.o w32select.o w32term.o w32xfns.o w32d3d.o \
+   w16select.o widget.o xfont.o ftfont.o xftfont.o gtkutil.o \
+   xsettings.o xgselect.o termcap.o hbfont.o \
+   haikuterm.o haikufns.o haikumenu.o haikufont.o androidterm.o androidfns.o \
+diff --git a/src/emacs.c b/src/emacs.c
+index d1b51fa595..e8fdb8a3c5 100644
+--- a/src/emacs.c
++++ b/src/emacs.c
+@@ -2494,6 +2494,7 @@ android_emacs_init (int argc, char **argv, char *dump_file)
+       syms_of_w32notify ();
+ #endif /* HAVE_W32NOTIFY */
+       syms_of_w32dwrite ();
++      syms_of_w32d3d ();
+ #endif /* WINDOWSNT */
+ 
+       syms_of_xwidget ();
+diff --git a/src/w32d3d.c b/src/w32d3d.c
+new file mode 100644
+index 0000000000..602983afb0
+--- /dev/null
++++ b/src/w32d3d.c
+@@ -0,0 +1,717 @@
++/* Direct3D 11 and Direct2D GPU-accelerated rendering for Emacs on
++Windows.
++
++This module provides two layers of GPU acceleration:
++
++1. D3D11/DXGI swap chain -- replaces GDI BitBlt for frame
++presentation. Drawing still uses GDI through IDXGISurface1::GetDC()
++which provides a GPU-backed HDC.  Presenting uses the swap chain
++instead of BitBlt.
++
++2. Direct2D DC render target -- provides hardware-accelerated 2D
++   drawing (text, rectangles) that can bind to any GDI HDC.  This
++   eliminates the double-BitBlt overhead in the DirectWrite text
++   rendering path: instead of BitBlt(bg) -> DrawGlyphRun(bitmap) ->
++   BitBlt(result), we do BindDC -> DrawGlyphRun -> EndDraw.
++
++Both layers are loaded at runtime so Emacs falls back to GDI when
++they are unavailable.  */
++
++#include <config.h>
++
++#ifdef HAVE_NTGUI
++
++/* Needed before dxgi/d3d11/d2d1 headers.  */
++# include <windows.h>
++
++/* COBJMACROS gives us C-callable COM vtable macros like
++   IDXGISwapChain1_Present, ID2D1DCRenderTarget_DrawGlyphRun, etc.  */
++# define COBJMACROS
++
++/* initguid.h MUST come before any COM/DirectX headers so that
++   DEFINE_GUID instantiates IIDs rather than declaring them extern. */
++# include <initguid.h>
++
++# include <d2d1.h>
++# include <d3d11.h>
++# include <dwrite.h>
++# include <dxgi.h>
++# include <dxgi1_2.h>
++
++# include "lisp.h"
++# include "frame.h"
++# include "w32d3d.h"
++# include "w32term.h"
++
++/* ================================================================
++   D3D11 / DXGI layer
++   ================================================================ */
++
++/* ----------------------------------------------------------------
++   Runtime-loaded function pointers (D3D11 + DXGI)
++   ---------------------------------------------------------------- */
++
++typedef HRESULT (WINAPI *PFN_D3D11_CREATE_DEVICE) (
++  IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT,
++  const D3D_FEATURE_LEVEL *, UINT, UINT, ID3D11Device **,
++  D3D_FEATURE_LEVEL *, ID3D11DeviceContext **);
++
++typedef HRESULT (WINAPI *PFN_CREATE_DXGI_FACTORY2) (UINT, REFIID,
++						    void **);
++
++static PFN_D3D11_CREATE_DEVICE fn_D3D11CreateDevice;
++static PFN_CREATE_DXGI_FACTORY2 fn_CreateDXGIFactory2;
++
++/* ----------------------------------------------------------------
++   Global D3D11 state (shared across all frames)
++   ---------------------------------------------------------------- */
++
++static HMODULE d3d11_dll;
++static HMODULE dxgi_dll;
++static ID3D11Device *d3d11_device;
++static ID3D11DeviceContext *d3d11_context;
++static IDXGIFactory2 *dxgi_factory;
++static bool d3d_initialized;
++
++/* ----------------------------------------------------------------
++   D3D11 initialization and shutdown
++   ---------------------------------------------------------------- */
++
++bool
++w32_d3d_available_p (void)
++{
++  return d3d_initialized && d3d11_device != NULL;
++}
++
++bool
++w32_d3d_init (void)
++{
++  HRESULT hr;
++  D3D_FEATURE_LEVEL feature_levels[] = {
++    D3D_FEATURE_LEVEL_11_1,
++    D3D_FEATURE_LEVEL_11_0,
++    D3D_FEATURE_LEVEL_10_1,
++    D3D_FEATURE_LEVEL_10_0,
++  };
++  D3D_FEATURE_LEVEL actual_level;
++
++  if (d3d_initialized)
++    return d3d11_device != NULL;
++
++  d3d_initialized = true;
++
++  /* Load d3d11.dll at runtime.  */
++  d3d11_dll = LoadLibrary ("d3d11.dll");
++  if (!d3d11_dll)
++    return false;
++
++  fn_D3D11CreateDevice
++    = (PFN_D3D11_CREATE_DEVICE) GetProcAddress (d3d11_dll,
++						"D3D11CreateDevice");
++  if (!fn_D3D11CreateDevice)
++    {
++      FreeLibrary (d3d11_dll);
++      d3d11_dll = NULL;
++      return false;
++    }
++
++  /* Load dxgi.dll at runtime.  */
++  dxgi_dll = LoadLibrary ("dxgi.dll");
++  if (!dxgi_dll)
++    {
++      FreeLibrary (d3d11_dll);
++      d3d11_dll = NULL;
++      return false;
++    }
++
++  fn_CreateDXGIFactory2 = (PFN_CREATE_DXGI_FACTORY2)
++    GetProcAddress (dxgi_dll, "CreateDXGIFactory2");
++  /* Fall back to CreateDXGIFactory1 if Factory2 is unavailable
++     (Windows 7 without platform update).  */
++  if (!fn_CreateDXGIFactory2)
++    {
++      typedef HRESULT (WINAPI * PFN_F1) (REFIID, void **);
++      PFN_F1 fn_f1
++	= (PFN_F1) GetProcAddress (dxgi_dll, "CreateDXGIFactory1");
++      if (!fn_f1)
++	goto fail_dxgi;
++
++      /* Try directly as IDXGIFactory2.  */
++      hr = fn_f1 (&IID_IDXGIFactory2, (void **) &dxgi_factory);
++      if (FAILED (hr))
++	{
++	  /* Create as Factory1 and QI for Factory2.  */
++	  IDXGIFactory1 *factory1 = NULL;
++	  hr = fn_f1 (&IID_IDXGIFactory1, (void **) &factory1);
++	  if (SUCCEEDED (hr) && factory1)
++	    {
++	      hr = IDXGIFactory1_QueryInterface (factory1,
++						 &IID_IDXGIFactory2,
++						 (void *
++						    *) &dxgi_factory);
++	      IDXGIFactory1_Release (factory1);
++	    }
++	  if (FAILED (hr))
++	    goto fail_dxgi;
++	}
++    }
++  else
++    {
++      hr = fn_CreateDXGIFactory2 (0, &IID_IDXGIFactory2,
++				  (void **) &dxgi_factory);
++      if (FAILED (hr))
++	goto fail_dxgi;
++    }
++
++  /* Create the D3D11 device with BGRA support (required for
++     GDI-compatible surfaces).  */
++  hr = fn_D3D11CreateDevice (NULL, /* default adapter */
++			     D3D_DRIVER_TYPE_HARDWARE,
++			     NULL, /* no software module */
++			     D3D11_CREATE_DEVICE_BGRA_SUPPORT,
++			     feature_levels,
++			     ARRAYELTS (feature_levels),
++			     D3D11_SDK_VERSION, &d3d11_device,
++			     &actual_level, &d3d11_context);
++
++  if (FAILED (hr))
++    {
++      /* Try WARP (software) driver as fallback.  */
++      hr = fn_D3D11CreateDevice (NULL, D3D_DRIVER_TYPE_WARP, NULL,
++				 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
++				 feature_levels,
++				 ARRAYELTS (feature_levels),
++				 D3D11_SDK_VERSION, &d3d11_device,
++				 &actual_level, &d3d11_context);
++    }
++
++  if (FAILED (hr))
++    {
++      IDXGIFactory2_Release (dxgi_factory);
++      dxgi_factory = NULL;
++      goto fail_dxgi;
++    }
++
++  return true;
++
++fail_dxgi:
++  FreeLibrary (dxgi_dll);
++  FreeLibrary (d3d11_dll);
++  dxgi_dll = NULL;
++  d3d11_dll = NULL;
++  return false;
++}
++
++void
++w32_d3d_shutdown (void)
++{
++  if (d3d11_context)
++    {
++      ID3D11DeviceContext_Release (d3d11_context);
++      d3d11_context = NULL;
++    }
++  if (d3d11_device)
++    {
++      ID3D11Device_Release (d3d11_device);
++      d3d11_device = NULL;
++    }
++  if (dxgi_factory)
++    {
++      IDXGIFactory2_Release (dxgi_factory);
++      dxgi_factory = NULL;
++    }
++  if (d3d11_dll)
++    {
++      FreeLibrary (d3d11_dll);
++      d3d11_dll = NULL;
++    }
++  if (dxgi_dll)
++    {
++      FreeLibrary (dxgi_dll);
++      dxgi_dll = NULL;
++    }
++
++  w32_d2d_shutdown ();
++  d3d_initialized = false;
++}
++
++/* ----------------------------------------------------------------
++   Per-frame swap chain management
++   ---------------------------------------------------------------- */
++
++bool
++w32_d3d_create_swap_chain (struct w32_output *output, HWND hwnd,
++			   int width, int height)
++{
++  HRESULT hr;
++  IDXGISwapChain1 *swap_chain = NULL;
++  DXGI_SWAP_CHAIN_DESC1 desc;
++
++  if (!w32_d3d_available_p ())
++    return false;
++
++  /* If a swap chain already exists, release it first.  */
++  if (output->dxgi_swap_chain)
++    w32_d3d_release_swap_chain (output);
++
++  memset (&desc, 0, sizeof (desc));
++  desc.Width = width;
++  desc.Height = height;
++  desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
++  desc.SampleDesc.Count = 1;
++  desc.SampleDesc.Quality = 0;
++  desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
++  desc.BufferCount = 1;
++  desc.Scaling = DXGI_SCALING_STRETCH;
++  desc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
++  desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
++  desc.Flags = DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE;
++
++  hr
++    = IDXGIFactory2_CreateSwapChainForHwnd (dxgi_factory,
++					    (IUnknown *) d3d11_device,
++					    hwnd, &desc, NULL, NULL,
++					    &swap_chain);
++
++  if (FAILED (hr))
++    {
++      /* SEQUENTIAL may not be available in some configurations.
++	 Fall back to FLIP_SEQUENTIAL; note that FLIP modes do NOT
++	 preserve back buffer content between presents, so Emacs
++	 must do full redraws when this path is taken.  */
++      desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
++      hr = IDXGIFactory2_CreateSwapChainForHwnd (dxgi_factory,
++						 (IUnknown *)
++						   d3d11_device,
++						 hwnd, &desc, NULL,
++						 NULL, &swap_chain);
++    }
++
++  if (FAILED (hr))
++    return false;
++
++  output->dxgi_swap_chain = swap_chain;
++  return true;
++}
++
++void
++w32_d3d_release_swap_chain (struct w32_output *output)
++{
++  if (output->dxgi_surface)
++    {
++      IDXGISurface1_Release (output->dxgi_surface);
++      output->dxgi_surface = NULL;
++    }
++
++  if (output->dxgi_swap_chain)
++    {
++      IDXGISwapChain1_Release (output->dxgi_swap_chain);
++      output->dxgi_swap_chain = NULL;
++    }
++}
++
++/* ----------------------------------------------------------------
++   GDI DC interop -- acquire/release an HDC from the swap chain
++   ---------------------------------------------------------------- */
++
++HDC
++w32_d3d_acquire_dc (struct w32_output *output)
++{
++  HRESULT hr;
++  IDXGISurface1 *surface = NULL;
++  HDC hdc = NULL;
++
++  if (!output->dxgi_swap_chain)
++    return NULL;
++
++  /* Get the back buffer surface.  */
++  hr = IDXGISwapChain1_GetBuffer (output->dxgi_swap_chain, 0,
++				  &IID_IDXGISurface1,
++				  (void **) &surface);
++  if (FAILED (hr) || !surface)
++    return NULL;
++
++  /* Get a GDI-compatible DC from the surface.  The FALSE argument
++     means we do NOT discard the existing contents -- we want to
++     draw incrementally on top of what is already there.  */
++  hr = IDXGISurface1_GetDC (surface, FALSE, &hdc);
++  if (FAILED (hr) || !hdc)
++    {
++      IDXGISurface1_Release (surface);
++      return NULL;
++    }
++
++  output->dxgi_surface = surface;
++  return hdc;
++}
++
++void
++w32_d3d_release_dc (struct w32_output *output)
++{
++  if (output->dxgi_surface)
++    {
++      IDXGISurface1_ReleaseDC (output->dxgi_surface, NULL);
++
++      IDXGISurface1_Release (output->dxgi_surface);
++      output->dxgi_surface = NULL;
++    }
++}
++
++/* ----------------------------------------------------------------
++   Present
++   ---------------------------------------------------------------- */
++
++void
++w32_d3d_present (struct w32_output *output)
++{
++  HRESULT hr;
++
++  if (!output->dxgi_swap_chain)
++    return;
++
++  /* Always present the full frame.  Dirty rect optimization is
++     not used here because the SEQUENTIAL swap effect requires the
++     entire back buffer to be valid, and FLIP_SEQUENTIAL does not
++     preserve back buffer content between presents at all.  */
++  hr = IDXGISwapChain1_Present (output->dxgi_swap_chain, 1, 0);
++
++  /* If the device was removed (GPU reset, driver update, etc.),
++     mark D3D as unavailable so the frame falls back to GDI.  */
++  if (hr == DXGI_ERROR_DEVICE_REMOVED
++      || hr == DXGI_ERROR_DEVICE_RESET)
++    {
++      w32_d3d_release_swap_chain (output);
++      output->use_d3d = 0;
++    }
++}
++
++/* ----------------------------------------------------------------
++   Resize
++   ---------------------------------------------------------------- */
++
++bool
++w32_d3d_resize (struct w32_output *output, int width, int height)
++{
++  HRESULT hr;
++
++  if (!output->dxgi_swap_chain)
++    return false;
++
++  /* Must release all references to the back buffer before
++     resizing.  */
++  if (output->dxgi_surface)
++    {
++      IDXGISurface1_Release (output->dxgi_surface);
++      output->dxgi_surface = NULL;
++    }
++
++  hr = IDXGISwapChain1_ResizeBuffers (
++    output->dxgi_swap_chain, 0, width, height, DXGI_FORMAT_UNKNOWN,
++    DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE);
++  if (FAILED (hr))
++    {
++      /* Resize failed -- release swap chain, caller will fall back
++	 to GDI.  */
++      w32_d3d_release_swap_chain (output);
++      return false;
++    }
++
++  return true;
++}
++
++void
++w32_d3d_disable (struct w32_output *output)
++{
++  output->d3d_direct_dc = 0;
++  output->use_d3d = 0;
++  output->paint_buffer = NULL;
++  w32_d3d_release_swap_chain (output);
++}
++
++/* ================================================================
++   Direct2D DC render target layer
++   ================================================================
++
++   ID2D1DCRenderTarget binds to any GDI HDC for drawing.  This lets
++   us draw glyphs and fill rectangles with D2D hardware acceleration
++   on the existing GDI memory bitmap (paint_dc), without changing
++   the overall architecture.
++
++   The key benefit: DirectWrite's w32_dwrite_draw currently does
++     BitBlt(bg) -> DrawGlyphRun(bitmap) -> BitBlt(result)
++   With D2D, this becomes:
++     BindDC(hdc) -> BeginDraw -> DrawGlyphRun -> EndDraw
++   Eliminating both BitBlt operations entirely.  */
++
++/* ----------------------------------------------------------------
++   Runtime-loaded function pointer (D2D1)
++   ---------------------------------------------------------------- */
++
++typedef HRESULT (WINAPI *PFN_D2D1_CREATE_FACTORY) (
++  D2D1_FACTORY_TYPE, REFIID, const D2D1_FACTORY_OPTIONS *, void **);
++
++static PFN_D2D1_CREATE_FACTORY fn_D2D1CreateFactory;
++
++/* ----------------------------------------------------------------
++   Global D2D state
++   ---------------------------------------------------------------- */
++
++static HMODULE d2d1_dll;
++static ID2D1Factory *d2d1_factory;
++static ID2D1DCRenderTarget *d2d_dc_target;
++static bool d2d_initialized;
++
++/* ----------------------------------------------------------------
++   D2D initialization
++   ---------------------------------------------------------------- */
++
++bool
++w32_d2d_available_p (void)
++{
++  return d2d_initialized && d2d_dc_target != NULL;
++}
++
++static bool
++w32_d2d_init (void)
++{
++  HRESULT hr;
++  D2D1_RENDER_TARGET_PROPERTIES rt_props;
++
++  if (d2d_initialized)
++    return d2d_dc_target != NULL;
++
++  d2d_initialized = true;
++
++  /* Load d2d1.dll at runtime.  */
++  d2d1_dll = LoadLibrary ("d2d1.dll");
++  if (!d2d1_dll)
++    return false;
++
++  fn_D2D1CreateFactory
++    = (PFN_D2D1_CREATE_FACTORY) GetProcAddress (d2d1_dll,
++						"D2D1CreateFactory");
++  if (!fn_D2D1CreateFactory)
++    {
++      FreeLibrary (d2d1_dll);
++      d2d1_dll = NULL;
++      return false;
++    }
++
++  /* Create D2D factory.  Single-threaded because Emacs draws
++     exclusively from the main (Lisp) thread.  */
++  hr = fn_D2D1CreateFactory (D2D1_FACTORY_TYPE_SINGLE_THREADED,
++			     &IID_ID2D1Factory, NULL, /* no options */
++			     (void **) &d2d1_factory);
++  if (FAILED (hr) || !d2d1_factory)
++    {
++      FreeLibrary (d2d1_dll);
++      d2d1_dll = NULL;
++      return false;
++    }
++
++  /* Create a DC render target.  This is a singleton that can be
++     re-bound to different HDCs via BindDC().
++
++     D2D1_RENDER_TARGET_TYPE_DEFAULT lets D2D choose hardware
++     vs software.  GDI_COMPATIBLE usage allows mixed D2D/GDI
++     drawing on the same surface (needed for operations not yet
++     ported to D2D).  */
++  memset (&rt_props, 0, sizeof (rt_props));
++  rt_props.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
++  rt_props.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
++  rt_props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
++  rt_props.dpiX = 0; /* Use default DPI.  */
++  rt_props.dpiY = 0;
++  rt_props.usage = D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE;
++  rt_props.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
++
++  hr = ID2D1Factory_CreateDCRenderTarget (d2d1_factory, &rt_props,
++					  &d2d_dc_target);
++  if (FAILED (hr) || !d2d_dc_target)
++    {
++      ID2D1Factory_Release (d2d1_factory);
++      d2d1_factory = NULL;
++      FreeLibrary (d2d1_dll);
++      d2d1_dll = NULL;
++      return false;
++    }
++
++  /* Set text antialias mode to match DirectWrite quality.  */
++  ID2D1RenderTarget_SetTextAntialiasMode (
++    (ID2D1RenderTarget *) d2d_dc_target,
++    D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
++
++  return true;
++}
++
++void
++w32_d2d_shutdown (void)
++{
++  if (d2d_dc_target)
++    {
++      ID2D1DCRenderTarget_Release (d2d_dc_target);
++      d2d_dc_target = NULL;
++    }
++  if (d2d1_factory)
++    {
++      ID2D1Factory_Release (d2d1_factory);
++      d2d1_factory = NULL;
++    }
++  if (d2d1_dll)
++    {
++      FreeLibrary (d2d1_dll);
++      d2d1_dll = NULL;
++    }
++  d2d_initialized = false;
++}
++
++/* ----------------------------------------------------------------
++   D2D drawing operations
++   ---------------------------------------------------------------- */
++
++/* Helper: convert COLORREF (0x00BBGGRR) to D2D1_COLOR_F.  */
++static D2D1_COLOR_F
++colorref_to_d2d (COLORREF c)
++{
++  D2D1_COLOR_F color;
++  color.r = (float) GetRValue (c) / 255.0f;
++  color.g = (float) GetGValue (c) / 255.0f;
++  color.b = (float) GetBValue (c) / 255.0f;
++  color.a = 1.0f;
++  return color;
++}
++
++/* Begin a D2D drawing session: bind the render target to HDC,
++   call BeginDraw, and create a solid color brush.  Returns the
++   brush on success, NULL on failure (EndDraw is called on error
++   so the caller need not clean up).  */
++static ID2D1SolidColorBrush *
++d2d_begin_draw (HDC hdc, RECT *bind_rect, COLORREF color)
++{
++  HRESULT hr;
++  ID2D1SolidColorBrush *brush = NULL;
++  D2D1_COLOR_F d2d_color;
++
++  hr = ID2D1DCRenderTarget_BindDC (d2d_dc_target, hdc, bind_rect);
++  if (FAILED (hr))
++    return NULL;
++
++  ID2D1RenderTarget_BeginDraw ((ID2D1RenderTarget *) d2d_dc_target);
++
++  d2d_color = colorref_to_d2d (color);
++  hr = ID2D1RenderTarget_CreateSolidColorBrush ((ID2D1RenderTarget *)
++						  d2d_dc_target,
++						&d2d_color, NULL,
++						&brush);
++  if (FAILED (hr) || !brush)
++    {
++      ID2D1RenderTarget_EndDraw ((ID2D1RenderTarget *) d2d_dc_target,
++				 NULL, NULL);
++      return NULL;
++    }
++
++  return brush;
++}
++
++/* End a D2D drawing session: release the brush and call EndDraw.
++   Returns true if EndDraw succeeded.  */
++static bool
++d2d_end_draw (ID2D1SolidColorBrush *brush)
++{
++  HRESULT hr;
++
++  ID2D1SolidColorBrush_Release (brush);
++  hr = ID2D1RenderTarget_EndDraw ((ID2D1RenderTarget *) d2d_dc_target,
++				  NULL, NULL);
++  return SUCCEEDED (hr);
++}
++
++bool
++w32_d2d_draw_glyphs (HDC hdc, int x, int y, void *font_face,
++		     float font_size, const unsigned short *indices,
++		     const float *advances, int len, COLORREF color,
++		     int area_x, int area_y, int area_w, int area_h)
++{
++  RECT bind_rect;
++  ID2D1SolidColorBrush *brush;
++  D2D1_POINT_2F baseline_origin;
++  DWRITE_GLYPH_RUN glyph_run;
++
++  if (!w32_d2d_available_p () || !font_face || len <= 0)
++    return false;
++
++  bind_rect.left = area_x;
++  bind_rect.top = area_y;
++  bind_rect.right = area_x + area_w;
++  bind_rect.bottom = area_y + area_h;
++
++  brush = d2d_begin_draw (hdc, &bind_rect, color);
++  if (!brush)
++    return false;
++
++  /* Build the DWRITE_GLYPH_RUN structure.  */
++  memset (&glyph_run, 0, sizeof (glyph_run));
++  glyph_run.fontFace = (IDWriteFontFace *) font_face;
++  glyph_run.fontEmSize = font_size;
++  glyph_run.glyphCount = len;
++  glyph_run.glyphIndices = indices;
++  glyph_run.glyphAdvances = advances;
++
++  /* The baseline origin is relative to the bind rect.
++     x,y are in absolute coordinates; shift to bind-rect-relative.  */
++  baseline_origin.x = (float) (x - area_x);
++  baseline_origin.y = (float) (y - area_y);
++
++  ID2D1RenderTarget_DrawGlyphRun ((ID2D1RenderTarget *) d2d_dc_target,
++				  baseline_origin, &glyph_run,
++				  (ID2D1Brush *) brush,
++				  DWRITE_MEASURING_MODE_GDI_CLASSIC);
++
++  return d2d_end_draw (brush);
++}
++
++bool
++w32_d2d_fill_rect (HDC hdc, int x, int y, int w, int h,
++		   COLORREF color)
++{
++  RECT bind_rect;
++  ID2D1SolidColorBrush *brush;
++  D2D1_RECT_F fill_rect;
++
++  if (!w32_d2d_available_p ())
++    return false;
++
++  bind_rect.left = x;
++  bind_rect.top = y;
++  bind_rect.right = x + w;
++  bind_rect.bottom = y + h;
++
++  brush = d2d_begin_draw (hdc, &bind_rect, color);
++  if (!brush)
++    return false;
++
++  /* Fill rect is relative to the bind rect origin.  */
++  fill_rect.left = 0.0f;
++  fill_rect.top = 0.0f;
++  fill_rect.right = (float) w;
++  fill_rect.bottom = (float) h;
++
++  ID2D1RenderTarget_FillRectangle ((ID2D1RenderTarget *)
++				     d2d_dc_target,
++				   &fill_rect, (ID2D1Brush *) brush);
++
++  return d2d_end_draw (brush);
++}
++
++/* ================================================================
++   Emacs init entry point
++   ================================================================ */
++
++void
++syms_of_w32d3d (void)
++{
++  w32_d3d_init ();
++  w32_d2d_init ();
++}
++
++#endif /* HAVE_NTGUI */
+diff --git a/src/w32d3d.h b/src/w32d3d.h
+new file mode 100644
+index 0000000000..d4c85badb9
+--- /dev/null
++++ b/src/w32d3d.h
+@@ -0,0 +1,111 @@
++/* Direct3D 11 and Direct2D GPU-accelerated rendering for Emacs on
++Windows.
++
++This module provides two layers of GPU acceleration:
++
++1. D3D11/DXGI swap chain -- replaces GDI BitBlt for frame
++presentation. All existing GDI drawing code continues to work
++unchanged through IDXGISurface1::GetDC(), which provides a
++GDI-compatible HDC backed by the GPU swap chain surface.
++
++2. Direct2D DC render target -- provides hardware-accelerated 2D
++   drawing (text, rectangles) bound to any GDI HDC.  This eliminates
++   the double-BitBlt overhead in the DirectWrite text rendering path.
++
++Both layers are loaded at runtime via LoadLibrary/GetProcAddress so
++that Emacs still starts on systems without D3D11 or D2D (graceful
++fallback to GDI double buffering and GDI-based DirectWrite).  */
++
++#ifndef EMACS_W32D3D_H
++#define EMACS_W32D3D_H
++
++#include <windows.h>
++
++#ifdef HAVE_NTGUI
++
++struct w32_output;
++
++/* ----------------------------------------------------------------
++   D3D11 / DXGI swap chain layer
++   ---------------------------------------------------------------- */
++
++/* Initialize the D3D11 subsystem.  Call once at startup.
++   Returns true on success, false if D3D11 is unavailable.  */
++extern bool w32_d3d_init (void);
++
++/* Release all global D3D11 resources.  Call at shutdown.  */
++extern void w32_d3d_shutdown (void);
++
++/* Create a DXGI swap chain for the given HWND.
++   Returns true on success.  On failure, the frame should
++   fall back to GDI double buffering.  */
++extern bool w32_d3d_create_swap_chain (struct w32_output *output,
++				       HWND hwnd, int width,
++				       int height);
++
++/* Release the swap chain and associated resources.  */
++extern void w32_d3d_release_swap_chain (struct w32_output *output);
++
++/* Acquire a GDI-compatible HDC from the swap chain back buffer.
++   The caller must call w32_d3d_release_dc() when done drawing.
++   Returns NULL on failure.  */
++extern HDC w32_d3d_acquire_dc (struct w32_output *output);
++
++/* Release the GDI-compatible HDC back to the swap chain surface.  */
++extern void w32_d3d_release_dc (struct w32_output *output);
++
++/* Present the swap chain back buffer to the screen.  */
++extern void w32_d3d_present (struct w32_output *output);
++
++/* Resize the swap chain buffers to match new dimensions.
++   Call when the frame is resized.  Returns true on success.  */
++extern bool w32_d3d_resize (struct w32_output *output, int width,
++			    int height);
++
++/* Return true if D3D11 is initialized and available.  */
++extern bool w32_d3d_available_p (void);
++
++/* Disable D3D for a frame: clear all D3D state fields and release
++   the swap chain.  Use when D3D operations fail and we need to
++   fall back to GDI.  */
++extern void w32_d3d_disable (struct w32_output *output);
++
++/* ----------------------------------------------------------------
++   Direct2D DC render target layer
++   ---------------------------------------------------------------- */
++
++/* Return true if the D2D drawing functions are available.  */
++extern bool w32_d2d_available_p (void);
++
++/* Shut down D2D: release factory, render target, and DLL.  */
++extern void w32_d2d_shutdown (void);
++
++/* Draw a glyph run using Direct2D, bound to the given HDC.
++   HDC is the target device context (e.g., paint_dc).
++   X, Y are the baseline origin (Y is the TOP of the glyph area,
++   FONT_ASCENT is added internally to get baseline position).
++   FONT_FACE is the IDWriteFontFace* for the font.
++   FONT_SIZE is the em size in DIPs.
++   INDICES is an array of glyph indices.
++   ADVANCES is an array of glyph advance widths.
++   LEN is the number of glyphs.
++   COLOR is the text foreground color as COLORREF.
++   AREA_X, AREA_Y, AREA_W, AREA_H define the clipping/bind region.
++   Returns true on success, false if D2D is unavailable or fails.  */
++extern bool w32_d2d_draw_glyphs (HDC hdc, int x, int y,
++				 void *font_face, float font_size,
++				 const unsigned short *indices,
++				 const float *advances, int len,
++				 COLORREF color, int area_x,
++				 int area_y, int area_w, int area_h);
++
++/* Fill a rectangle using Direct2D, bound to the given HDC.
++   Returns true on success, false to fall back to GDI FillRect.  */
++extern bool w32_d2d_fill_rect (HDC hdc, int x, int y, int w, int h,
++			       COLORREF color);
++
++/* Emacs init entry point for the D3D11/D2D subsystem.  */
++extern void syms_of_w32d3d (void);
++
++#endif /* HAVE_NTGUI */
++#endif /* EMACS_W32D3D_H */
+diff --git a/src/w32dwrite.c b/src/w32dwrite.c
+index 248710b624..58e729404a 100644
+--- a/src/w32dwrite.c
++++ b/src/w32dwrite.c
+@@ -47,6 +47,7 @@
+ 
+ #include "frame.h"
+ #include "w32common.h"
++#include "w32d3d.h"
+ #include "w32font.h"
+ #include "w32term.h"
+ 
+@@ -1261,7 +1262,7 @@ w32_initialize_direct_write (void)
+ 
+ bool
+ w32_dwrite_draw (HDC hdc, int x, int y, unsigned *glyphs, int len,
+-		 COLORREF color, struct font *font)
++		 COLORREF color, COLORREF bg_color, struct font *font)
+ {
+   HRESULT hr;
+   IDWriteFontFace *dwrite_font_face;
+@@ -1296,6 +1297,68 @@ w32_dwrite_draw (HDC hdc, int x, int y, unsigned *glyphs, int len,
+   int bitmap_width = left_margin + metrics.width + metrics.rbearing;
+   int bitmap_height = font->ascent + font->descent;
+ 
++  /* Convert glyph indices from unsigned int to UINT16 once, shared
++     by both the D2D fast path and the bitmap fallback path.  */
++  UINT16 *indices = SAFE_ALLOCA (len * sizeof (UINT16));
++  for (int i = 0; i < len; i++)
++    indices[i] = glyphs[i];
++
++  /* Try the Direct2D fast path for non-color glyphs.  This
++     eliminates the double-BitBlt through IDWriteBitmapRenderTarget
++     by drawing directly on the target HDC via a D2D DC render
++     target.  Color glyphs still use the bitmap path below.  */
++  if (w32_d2d_available_p () && uniscribe_font->dwrite_has_color <= 0)
++    {
++      /* If dwrite_has_color is 0 (unknown), probe it first.  The
++	 probe result is cached, so this only happens once per font.
++	 If the font turns out to have color glyphs, fall through
++	 to the bitmap path.  */
++      if (uniscribe_font->dwrite_has_color == 0
++	  && dwrite_factory2 != NULL)
++	{
++	  DWRITE_GLYPH_RUN probe_run;
++	  memset (&probe_run, 0, sizeof (probe_run));
++	  probe_run.fontFace = dwrite_font_face;
++	  probe_run.fontEmSize = font_size;
++	  probe_run.glyphIndices = indices;
++	  probe_run.glyphCount = len;
++	  probe_run.glyphAdvances = advances;
++
++	  IDWriteColorGlyphRunEnumerator *probe_layers = NULL;
++	  hr = dwrite_factory2->lpVtbl
++		 ->TranslateColorGlyphRun (dwrite_factory2, 0, 0,
++					   &probe_run, NULL,
++					   MEASURING_MODE, NULL, 0,
++					   &probe_layers);
++	  if (hr == DWRITE_E_NOCOLOR)
++	    uniscribe_font->dwrite_has_color = -1;
++	  else if (SUCCEEDED (hr))
++	    {
++	      uniscribe_font->dwrite_has_color = 1;
++	      RELEASE_COM (probe_layers);
++	      /* Fall through to bitmap path for color glyphs.  */
++	      goto bitmap_path;
++	    }
++	  /* On failure, treat as non-color and try D2D anyway.  */
++	}
++
++      /* Draw glyphs with D2D.  The area covers the full glyph
++	 bounding box so D2D clips correctly.  */
++      bool ok
++	= w32_d2d_draw_glyphs (hdc, x - left_margin, y + font->ascent,
++			       dwrite_font_face, font_size, indices,
++			       advances, len, color, x - left_margin,
++			       y, bitmap_width, bitmap_height);
++      if (ok)
++	{
++	  SAFE_FREE ();
++	  return true;
++	}
++      /* D2D failed -- fall through to bitmap path.  */
++    }
++
++bitmap_path:
++
+   /* We never release this, get_bitmap_render_target reuses it.  */
+   IDWriteBitmapRenderTarget *bitmap_render_target
+     = get_bitmap_render_target (hdc, bitmap_width, bitmap_height);
+@@ -1312,15 +1375,12 @@ w32_dwrite_draw (HDC hdc, int x, int y, unsigned *glyphs, int len,
+   HDC text_dc = bitmap_render_target->lpVtbl->GetMemoryDC (
+     bitmap_render_target);
+ 
+-  /* Copy the background pixel to the render target bitmap.  */
++  /* Copy the background from the frame's paint DC into the render
++     target bitmap.  This preserves whatever was drawn behind the
++     text area (faces, overlapping glyphs, images, etc.).  */
+   BitBlt (text_dc, 0, 0, bitmap_width, bitmap_height, hdc,
+ 	  x - left_margin, y, SRCCOPY);
+ 
+-  UINT16 *indices = SAFE_ALLOCA (len * sizeof (UINT16));
+-
+-  for (int i = 0; i < len; i++)
+-    indices[i] = glyphs[i];
+-
+   DWRITE_GLYPH_RUN glyph_run;
+   glyph_run.fontFace = dwrite_font_face;
+   glyph_run.fontEmSize = font_size;
+diff --git a/src/w32font.c b/src/w32font.c
+index e121b13172..1e18db28c1 100644
+--- a/src/w32font.c
++++ b/src/w32font.c
+@@ -18,14 +18,15 @@
+ 
+ #include <config.h>
+ #include <windows.h>
++#include <commdlg.h>
+ #include <ctype.h>
+ #include <math.h>
+ #include <stdio.h>
+-#include <commdlg.h>
+ 
+ #include "lisp.h"
+ #include "coding.h" /* for ENCODE_SYSTEM, DECODE_SYSTEM */
+ #include "frame.h"
++#include "w32d3d.h"
+ #include "w32font.h"
+ #include "w32term.h"
+ #ifdef WINDOWSNT
+@@ -707,7 +708,12 @@ w32font_draw (struct glyph_string *s, int from, int to, int x, int y,
+       rect.top = y - ascent;
+       rect.right = x + s->width;
+       rect.bottom = y + descent;
+-      FillRect (s->hdc, &rect, brush);
++      if (!w32_d2d_available_p ()
++	  || !w32_d2d_fill_rect (s->hdc, rect.left, rect.top,
++				 rect.right - rect.left,
++				 rect.bottom - rect.top,
++				 s->gc->background))
++	FillRect (s->hdc, &rect, brush);
+       /* brush is cached, don't delete */
+     }
+ 
+@@ -718,7 +724,8 @@ w32font_draw (struct glyph_string *s, int from, int to, int x, int y,
+       for (i = 0; i < len; i++)
+ 	if (!w32_use_direct_write (w32font)
+ 	    || !w32_dwrite_draw (s->hdc, x, y, s->char2b + from + i,
+-				 1, GetTextColor (s->hdc), s->font))
++				 1, GetTextColor (s->hdc),
++				 s->gc->background, s->font))
+ 	  {
+ 	    WCHAR c = s->char2b[from + i] & 0xFFFF;
+ 	    ExtTextOutW (s->hdc, x + i, y, options, NULL, &c, 1,
+@@ -729,7 +736,8 @@ w32font_draw (struct glyph_string *s, int from, int to, int x, int y,
+     {
+       if (!w32_use_direct_write (w32font)
+ 	  || !w32_dwrite_draw (s->hdc, x, y, s->char2b + from, len,
+-			       GetTextColor (s->hdc), s->font))
++			       GetTextColor (s->hdc),
++			       s->gc->background, s->font))
+ 	{
+ 	  /* The number of glyphs in a glyph_string cannot be larger
+ 	     than the maximum value of the 'used' member of a
+@@ -743,6 +751,15 @@ w32font_draw (struct glyph_string *s, int from, int to, int x, int y,
+ 	}
+     }
+ 
++  /* Track the drawn area for dirty rectangle optimization.  This
++     covers text drawn without background fill (e.g., cursor erase)
++     that bypasses w32_fill_rect.  */
++  {
++    struct font *font = s->font;
++    w32_note_drawn_rect (s->f, x, y - font->ascent, s->width,
++			 font->ascent + font->descent);
++  }
++
+   /* Restore clip region.  */
+   if (s->num_clips > 0)
+     SelectClipRgn (s->hdc, has_orig_clip ? draw_orig_clip_rgn : NULL);
+diff --git a/src/w32font.h b/src/w32font.h
+index 149f94f46b..213bff69bd 100644
+--- a/src/w32font.h
++++ b/src/w32font.h
+@@ -115,7 +115,8 @@ #define CACHE_BLOCKSIZE 128
+ void w32_initialize_direct_write (void);
+ bool w32_use_direct_write (struct w32font_info *w32font);
+ bool w32_dwrite_draw (HDC hdc, int x, int y, unsigned *glyphs,
+-		      int len, COLORREF color, struct font *font);
++		      int len, COLORREF color, COLORREF bg_color,
++		      struct font *font);
+ bool w32_dwrite_text_extents (struct font *font, const unsigned *code,
+ 			      int nglyphs,
+ 			      struct font_metrics *metrics);
+@@ -126,6 +127,7 @@ #define CACHE_BLOCKSIZE 128
+ unsigned w32_dwrite_encode_char (struct font *font, int c);
+ void w32_dwrite_free_cached_face (void *cache);
+ void syms_of_w32dwrite (void);
++void syms_of_w32d3d (void);
+ 
+ extern void globals_of_w32font (void);
+ 
+diff --git a/src/w32term.c b/src/w32term.c
+index 75e116d205..6f6f060eda 100644
+--- a/src/w32term.c
++++ b/src/w32term.c
+@@ -18,14 +18,19 @@ Copyright (C) 1989, 1993-2026 Free Software Foundation, Inc.
+ along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
+ 
+ #include <config.h>
++#include "w32term.h"
++/* PROPID may be missing from MinGW-w64 headers; define it before
++   gdiplus.h which needs it.  */
++#ifndef PROPID
++typedef ULONG PROPID;
++#endif
++#include <gdiplus.h>
+ #include <signal.h>
+ #include <stdio.h>
++#include <wtypes.h>
+ #include "lisp.h"
+ #include "blockinput.h"
+-#include "w32term.h"
+ #include "w32common.h" /* for OS version info */
+-#include <wtypes.h>
+-#include <gdiplus.h>
+ #include "w32gdiplus.h"
+ 
+ #include <ctype.h>
+@@ -60,6 +65,7 @@ Copyright (C) 1989, 1993-2026 Free Software Foundation, Inc.
+ #include <shellapi.h>
+ 
+ #include "font.h"
++#include "w32d3d.h"
+ #include "w32font.h"
+ 
+ #if 0 /* TODO: stipple */
+@@ -102,7 +108,6 @@ w32_get_brush (COLORREF color)
+   return brush_cache[i].brush;
+ }
+ 
+-
+ /* GDI pen cache to avoid repeated CreatePen/DeleteObject calls.
+    Uses a simple ring buffer keyed on (style, thickness, color).  */
+ #define PEN_CACHE_SIZE 8
+@@ -402,8 +407,65 @@ w32_show_back_buffer (struct frame *f)
+ 
+   enter_crit ();
+ 
+-  if (output->paint_buffer)
++  if (!output->paint_buffer)
++    {
++      leave_crit ();
++      return;
++    }
++
++  /* D3D11/DXGI GPU-accelerated presentation.  Two sub-paths:
++     1. d3d_direct_dc: paint_dc IS the swap chain surface DC.
++	Release it, Present the back buffer, then re-acquire a
++	fresh DC so drawing can continue for the next frame.
++     2. GDI bitmap + D3D present: BitBlt from GDI memory bitmap
++	into the swap chain's DC, then Present.  */
++  if (output->use_d3d && output->dxgi_swap_chain)
++    {
++      if (output->d3d_direct_dc)
++	{
++	  /* paint_dc is the swap chain surface DC -- no BitBlt
++	     needed, just release and present.  */
++	  w32_d3d_release_dc (output);
++	  output->paint_dc = NULL;
++	  w32_d3d_present (output);
++
++	  /* Re-acquire the surface DC for the next frame's
++	     drawing.  If this fails, fall back to GDI.  */
++	  HDC new_dc = w32_d3d_acquire_dc (output);
++	  if (new_dc)
++	    output->paint_dc = new_dc;
++	  else
++	    {
++	      w32_d3d_disable (output);
++	      SET_FRAME_GARBAGED (f);
++	    }
++	}
++      else
++	{
++	  /* GDI bitmap path: BitBlt into swap chain DC.  */
++	  HDC swap_dc = w32_d3d_acquire_dc (output);
++	  if (swap_dc)
++	    {
++	      BitBlt (swap_dc, 0, 0, FRAME_PIXEL_WIDTH (f),
++		      FRAME_PIXEL_HEIGHT (f), output->paint_dc, 0, 0,
++		      SRCCOPY);
++	      w32_d3d_release_dc (output);
++	      w32_d3d_present (output);
++	    }
++	  else
++	    {
++	      /* D3D DC acquisition failed; fall back to GDI for this
++		 frame and disable D3D for future frames.  */
++	      output->use_d3d = 0;
++	      w32_d3d_release_swap_chain (output);
++	      goto gdi_present;
++	    }
++	}
++    }
++  else
+     {
++    gdi_present:
++      /* GDI back buffer BitBlt path.  */
+       raw_dc = GetDC (output->window_desc);
+ 
+       if (!raw_dc)
+@@ -412,36 +474,56 @@ w32_show_back_buffer (struct frame *f)
+       BitBlt (raw_dc, 0, 0, FRAME_PIXEL_WIDTH (f),
+ 	      FRAME_PIXEL_HEIGHT (f), output->paint_dc, 0, 0,
+ 	      SRCCOPY);
+-      ReleaseDC (output->window_desc, raw_dc);
+ 
+-      output->paint_buffer_dirty = 0;
++      ReleaseDC (output->window_desc, raw_dc);
+     }
+ 
++  output->has_dirty_rect = 0;
++  output->paint_buffer_dirty = 0;
++
+   leave_crit ();
+ }
+ 
+ void
+ w32_release_paint_buffer (struct frame *f)
+ {
++  struct w32_output *output = FRAME_OUTPUT_DATA (f);
++
+   /* Delete the back buffer so it gets created
+      again the next time we ask for the DC.  */
+ 
+   enter_crit ();
+-  if (FRAME_OUTPUT_DATA (f)->paint_buffer)
++
++  /* Release D3D11 swap chain if active.  When d3d_direct_dc is set,
++     paint_dc is the swap chain surface DC (not a GDI memory DC), so
++     release it back to the surface before destroying the chain.  */
++  if (output->use_d3d)
+     {
+-      deselect_palette (f,
+-			FRAME_OUTPUT_DATA (f)->paint_buffer_handle);
+-
+-      SelectObject (FRAME_OUTPUT_DATA (f)->paint_dc,
+-		    FRAME_OUTPUT_DATA (f)->paint_dc_object);
+-      ReleaseDC (FRAME_OUTPUT_DATA (f)->window_desc,
+-		 FRAME_OUTPUT_DATA (f)->paint_buffer_handle);
+-      DeleteDC (FRAME_OUTPUT_DATA (f)->paint_dc);
+-      DeleteObject (FRAME_OUTPUT_DATA (f)->paint_buffer);
+-
+-      FRAME_OUTPUT_DATA (f)->paint_buffer = NULL;
+-      FRAME_OUTPUT_DATA (f)->paint_dc = NULL;
+-      FRAME_OUTPUT_DATA (f)->paint_buffer_handle = NULL;
++      if (output->d3d_direct_dc && output->paint_dc)
++	{
++	  w32_d3d_release_dc (output);
++	  output->paint_dc = NULL;
++	}
++      w32_d3d_release_swap_chain (output);
++      output->use_d3d = 0;
++      output->d3d_direct_dc = 0;
++      /* paint_buffer may be the (HBITMAP)1 sentinel in direct DC
++	 mode; clear it without calling DeleteObject.  */
++      output->paint_buffer = NULL;
++      output->paint_buffer_handle = NULL;
++    }
++  else if (output->paint_buffer)
++    {
++      deselect_palette (f, output->paint_buffer_handle);
++
++      SelectObject (output->paint_dc, output->paint_dc_object);
++      ReleaseDC (output->window_desc, output->paint_buffer_handle);
++      DeleteDC (output->paint_dc);
++      DeleteObject (output->paint_buffer);
++
++      output->paint_buffer = NULL;
++      output->paint_dc = NULL;
++      output->paint_buffer_handle = NULL;
+     }
+   leave_crit ();
+ }
+@@ -656,10 +738,43 @@ w32_draw_rectangle (HDC hdc, Emacs_GC *gc, int x, int y, int width,
+   SelectObject (hdc, oldhp);
+ }
+ 
++/* Record a drawn rectangle for partial back buffer flips.  */
++void
++w32_note_drawn_rect (struct frame *f, int x, int y, int w, int h)
++{
++  struct w32_output *output = FRAME_OUTPUT_DATA (f);
++  if (!output->paint_buffer)
++    return;
++  RECT r;
++  r.left = x;
++  r.top = y;
++  r.right = x + w;
++  r.bottom = y + h;
++  if (output->has_dirty_rect)
++    UnionRect (&output->dirty_rect, &output->dirty_rect, &r);
++  else
++    {
++      output->dirty_rect = r;
++      output->has_dirty_rect = 1;
++    }
++  output->paint_buffer_dirty = 1;
++}
++
+ /* Draw a filled rectangle at the specified position. */
+ void
+ w32_fill_rect (struct frame *f, HDC hdc, COLORREF pix, RECT *lprect)
+ {
++  int x = lprect->left;
++  int y = lprect->top;
++  int w = lprect->right - lprect->left;
++  int h = lprect->bottom - lprect->top;
++
++  w32_note_drawn_rect (f, x, y, w, h);
++
++  if (w32_d2d_available_p ()
++      && w32_d2d_fill_rect (hdc, x, y, w, h, pix))
++    return;
++
+   FillRect (hdc, lprect, w32_get_brush (pix));
+ }
+ 
+@@ -1071,6 +1186,7 @@ w32_draw_fringe_bitmap (struct window *w, struct glyph_row *row,
+ 
+ 	  SelectObject (hdc, h_orig_brush);
+ 	  /* h_brush is cached via w32_get_brush, don't delete */
++	  w32_note_drawn_rect (f, p->x, p->y, p->wd, p->h);
+ 	}
+       else
+ 	{
+@@ -1081,6 +1197,7 @@ w32_draw_fringe_bitmap (struct window *w, struct glyph_row *row,
+ 
+ 	  BitBlt (hdc, p->x, p->y, p->wd, p->h, compat_hdc, 0, p->dh,
+ 		  SRCCOPY);
++	  w32_note_drawn_rect (f, p->x, p->y, p->wd, p->h);
+ 	}
+ 
+       SelectObject (compat_hdc, horig_obj);
+@@ -1932,7 +2049,6 @@ w32_draw_relief_rect (struct frame *f, int left_x, int top_y,
+ 		      int vwidth, int raised_p, int top_p, int bot_p,
+ 		      int left_p, int right_p, RECT *clip_rect)
+ {
+-  int i;
+   Emacs_GC gc;
+   HDC hdc = get_frame_dc (f);
+ 
+@@ -1945,19 +2061,14 @@ w32_draw_relief_rect (struct frame *f, int left_x, int top_y,
+ 
+   /* Top.  */
+   if (top_p)
+-    for (i = 0; i < hwidth; ++i)
+-      w32_fill_area (f, hdc, gc.foreground, left_x + i * left_p,
+-		     top_y + i,
+-		     right_x - left_x - i * (left_p + right_p) + 1,
+-		     1);
++    w32_fill_area (f, hdc, gc.foreground, left_x, top_y,
++		   right_x - left_x + 1, hwidth);
+ 
+   /* Left.  */
+   if (left_p)
+-    for (i = 0; i < vwidth; ++i)
+-      w32_fill_area (f, hdc, gc.foreground, left_x + i,
+-		     top_y + (i + 1) * top_p, 1,
+-		     bottom_y - top_y - (i + 1) * (bot_p + top_p)
+-		       + 1);
++    w32_fill_area (f, hdc, gc.foreground, left_x,
++		   top_y + top_p * hwidth, vwidth,
++		   bottom_y - top_y - (bot_p + top_p) * hwidth + 1);
+ 
+   if (raised_p)
+     gc.foreground = f->output_data.w32->black_relief.gc->foreground;
+@@ -1966,19 +2077,15 @@ w32_draw_relief_rect (struct frame *f, int left_x, int top_y,
+ 
+   /* Bottom.  */
+   if (bot_p)
+-    for (i = 0; i < hwidth; ++i)
+-      w32_fill_area (f, hdc, gc.foreground, left_x + i * left_p,
+-		     bottom_y - i,
+-		     right_x - left_x - i * (left_p + right_p) + 1,
+-		     1);
++    w32_fill_area (f, hdc, gc.foreground, left_x,
++		   bottom_y - hwidth + 1, right_x - left_x + 1,
++		   hwidth);
+ 
+   /* Right.  */
+   if (right_p)
+-    for (i = 0; i < vwidth; ++i)
+-      w32_fill_area (f, hdc, gc.foreground, right_x - i,
+-		     top_y + (i + 1) * top_p, 1,
+-		     bottom_y - top_y - (i + 1) * (bot_p + top_p)
+-		       + 1);
++    w32_fill_area (f, hdc, gc.foreground, right_x - vwidth + 1,
++		   top_y + top_p * hwidth, vwidth,
++		   bottom_y - top_y - (bot_p + top_p) * hwidth + 1);
+ 
+   w32_set_clip_rectangle (hdc, NULL);
+ 
+@@ -3212,6 +3319,7 @@ w32_shift_glyphs_for_insert (struct frame *f, int x, int y, int width,
+ 
+   hdc = get_frame_dc (f);
+   BitBlt (hdc, x + shift_by, y, width, height, hdc, x, y, SRCCOPY);
++  w32_note_drawn_rect (f, x, y, width + shift_by, height);
+ 
+   release_frame_dc (f, hdc);
+ }
+@@ -3368,6 +3476,12 @@ w32_scroll_run (struct window *w, struct run *run)
+     {
+       hdc = get_frame_dc (f);
+       BitBlt (hdc, x, to_y, width, height, hdc, x, from_y, SRCCOPY);
++      {
++	int min_y = min (from_y, to_y);
++	int max_y = max (from_y, to_y);
++	w32_note_drawn_rect (f, x, min_y, width,
++			     max_y + height - min_y);
++      }
+       release_frame_dc (f, hdc);
+     }
+   else
+@@ -6805,6 +6919,8 @@ w32_draw_hollow_cursor (struct window *w, struct glyph_row *row)
+   /* Set clipping, draw the rectangle, and reset clipping again.  */
+   w32_clip_to_row (w, row, TEXT_AREA, hdc);
+   FrameRect (hdc, &rect, hb);
++  w32_note_drawn_rect (f, rect.left, rect.top, rect.right - rect.left,
++		       rect.bottom - rect.top);
+   w32_set_clip_rectangle (hdc, NULL);
+   release_frame_dc (f, hdc);
+ }
+@@ -8687,8 +8803,10 @@ syms_of_w32term (void)
+   w32_use_native_image_api = 0;
+ #endif
+ 
+-  DEFVAR_BOOL ("w32-yes-no-dialog-show-cancel", w32_yes_no_dialog_show_cancel,
+-    doc:/* If non-nil, show Cancel button in MS-Windows GUI Yes/No dialogs. */);
++  DEFVAR_BOOL ("w32-yes-no-dialog-show-cancel",
++	       w32_yes_no_dialog_show_cancel, doc:
++	       /* If non-nil, show Cancel button in MS-Windows
++GUI Yes/No dialogs.  */);
+   w32_yes_no_dialog_show_cancel = 1;
+ 
+   /* FIXME: The following variable will be (hopefully) removed
+diff --git a/src/w32term.h b/src/w32term.h
+index f28cd9a74b..9e06c01d36 100644
+--- a/src/w32term.h
++++ b/src/w32term.h
+@@ -1,5 +1,5 @@
+-/* Definitions and headers for communication on the Microsoft Windows API.
+-   Copyright (C) 1995, 2001-2026 Free Software Foundation, Inc.
++/* Definitions and headers for communication on the Microsoft Windows
++API. Copyright (C) 1995, 2001-2026 Free Software Foundation, Inc.
+ 
+ This file is part of GNU Emacs.
+ 
+@@ -14,13 +14,17 @@
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+-along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
+ 
+ /* Added by Kevin Gallo */
+ 
+-#include "w32gui.h"
+-#include "frame.h"
+ #include "atimer.h"
++#include "frame.h"
++#include "w32gui.h"
++
++/* Forward declarations for D3D11/DXGI COM interfaces.  */
++typedef struct IDXGISwapChain1 IDXGISwapChain1;
++typedef struct IDXGISurface1 IDXGISurface1;
+ 
+ /* Stack alignment stuff.  Every CALLBACK and thread function should
+    have the ALIGN_STACK attribute if it manipulates Lisp objects,
+@@ -31,17 +35,16 @@
+    about this can be found in
+    https://www.peterstock.co.uk/games/mingw_sse/.  */
+ #ifdef __GNUC__
+-# if USE_STACK_LISP_OBJECTS && !defined _WIN64 && !defined __x86_64__	\
+-  && __GNUC__ + (__GNUC_MINOR__ > 1) >= 5
+-#  define ALIGN_STACK __attribute__((force_align_arg_pointer))
++# if USE_STACK_LISP_OBJECTS && !defined _WIN64 \
++   && !defined __x86_64__ && __GNUC__ + (__GNUC_MINOR__ > 1) >= 5
++#  define ALIGN_STACK __attribute__ ((force_align_arg_pointer))
+ # else
+ #  define ALIGN_STACK
+-# endif	 /* USE_STACK_LISP_OBJECTS */
++# endif /* USE_STACK_LISP_OBJECTS */
+ #endif
+-
+ 
+-#define BLACK_PIX_DEFAULT(f) PALETTERGB(0,0,0)
+-#define WHITE_PIX_DEFAULT(f) PALETTERGB(255,255,255)
++#define BLACK_PIX_DEFAULT(f) PALETTERGB (0, 0, 0)
++#define WHITE_PIX_DEFAULT(f) PALETTERGB (255, 255, 255)
+ 
+ #define CP_DEFAULT 1004
+ 
+@@ -65,8 +68,9 @@ #define CP_DEFAULT 1004
+   int height, width, depth;
+ };
+ 
+-struct w32_palette_entry {
+-  struct w32_palette_entry * next;
++struct w32_palette_entry
++{
++  struct w32_palette_entry *next;
+   PALETTEENTRY entry;
+ #if 0
+   unsigned refcount;
+@@ -75,17 +79,18 @@ #define CP_DEFAULT 1004
+ 
+ extern void w32_regenerate_palette (struct frame *f);
+ extern void w32_fullscreen_rect (HWND hwnd, int fsmode, RECT normal,
+-                                 RECT *rect);
++				 RECT *rect);
+ 
+-/* For each display (currently only one on w32), we have a structure that
+-   records information about it.  */
++/* For each display (currently only one on w32), we have a structure
++   that records information about it.  */
+ 
+ struct w32_display_info
+ {
+   /* Chain of all w32_display_info structures.  */
+   struct w32_display_info *next;
+ 
+-  /* The generic display parameters corresponding to this w32 display.  */
++  /* The generic display parameters corresponding to this w32 display.
++   */
+   struct terminal *terminal;
+ 
+   /* This is a cons cell of the form (NAME . FONT-LIST-CACHE).  */
+@@ -124,7 +129,7 @@ #define CP_DEFAULT 1004
+ 
+   /* color palette information.  */
+   int has_palette;
+-  struct w32_palette_entry * color_list;
++  struct w32_palette_entry *color_list;
+   unsigned num_colors;
+   HPALETTE palette;
+ 
+@@ -141,7 +146,8 @@ #define CP_DEFAULT 1004
+   /* Minimum font height over all fonts in font_table.  */
+   int smallest_font_height;
+ 
+-  /* Reusable Graphics Context for drawing a cursor in a non-default face. */
++  /* Reusable Graphics Context for drawing a cursor in a non-default
++   * face. */
+   Emacs_GC *scratch_cursor_gc;
+ 
+   /* Information about the range of text currently shown in
+@@ -165,9 +171,9 @@ #define CP_DEFAULT 1004
+   ptrdiff_t bitmaps_last;
+ 
+   /* The frame (if any) which has the window that has keyboard focus.
+-     Zero if none.  This is examined by Ffocus_frame in w32fns.c.  Note
+-     that a mere EnterNotify event can set this; if you need to know the
+-     last frame specified in a FocusIn or FocusOut event, use
++     Zero if none.  This is examined by Ffocus_frame in w32fns.c. Note
++     that a mere EnterNotify event can set this; if you need to know
++     the last frame specified in a FocusIn or FocusOut event, use
+      w32_focus_event_frame.  */
+   struct frame *w32_focus_frame;
+ 
+@@ -177,9 +183,9 @@ #define CP_DEFAULT 1004
+      received a FocusIn event for it.  */
+   struct frame *w32_focus_event_frame;
+ 
+-  /* The frame which currently has the visual highlight, and should get
+-     keyboard input (other sorts of input have the frame encoded in the
+-     event).  It points to the focus frame's selected window's
++  /* The frame which currently has the visual highlight, and should
++     get keyboard input (other sorts of input have the frame encoded
++     in the event).  It points to the focus frame's selected window's
+      frame.  It differs from w32_focus_frame when we're using a global
+      minibuffer.  */
+   struct frame *highlight_frame;
+@@ -187,13 +193,16 @@ #define CP_DEFAULT 1004
+   /* The frame waiting to be auto-raised in w32_read_socket.  */
+   struct frame *w32_pending_autoraise_frame;
+ 
+-  /* The frame where the mouse was last time we reported a mouse event.  */
++  /* The frame where the mouse was last time we reported a mouse
++   * event.  */
+   struct frame *last_mouse_frame;
+ 
+-  /* The frame where the mouse was last time we reported a mouse motion.  */
++  /* The frame where the mouse was last time we reported a mouse
++   * motion.  */
+   struct frame *last_mouse_motion_frame;
+ 
+-  /* The frame where the mouse was last time we reported a mouse position.  */
++  /* The frame where the mouse was last time we reported a mouse
++   * position.  */
+   struct frame *last_mouse_glyph_frame;
+ 
+   /* Position where the mouse was last time we reported a motion.
+@@ -219,7 +228,8 @@ #define CP_DEFAULT 1004
+   int cursor_display_counter;
+ };
+ 
+-/* This is a chain of structures for all the displays currently in use.  */
++/* This is a chain of structures for all the displays currently in
++ * use.  */
+ extern struct w32_display_info *x_display_list;
+ extern struct w32_display_info one_w32_display_info;
+ 
+@@ -227,29 +237,31 @@ #define CP_DEFAULT 1004
+ extern HMENU current_popup_menu;
+ extern int menubar_in_use;
+ 
+-extern struct frame *w32_window_to_frame (struct w32_display_info *, HWND);
++extern struct frame *w32_window_to_frame (struct w32_display_info *,
++					  HWND);
+ 
+-extern void w32_real_positions (struct frame *f, int *xptr, int *yptr);
++extern void w32_real_positions (struct frame *f, int *xptr,
++				int *yptr);
+ 
+ extern void w32_clear_under_internal_border (struct frame *);
+ 
+ extern void w32_change_tab_bar_height (struct frame *, int);
+ extern void w32_change_tool_bar_height (struct frame *, int);
+-extern void w32_implicitly_set_name (struct frame *, Lisp_Object, Lisp_Object);
++extern void w32_implicitly_set_name (struct frame *, Lisp_Object,
++				     Lisp_Object);
+ extern void w32_set_scroll_bar_default_width (struct frame *);
+ extern void w32_set_scroll_bar_default_height (struct frame *);
+ 
+-
+-extern struct w32_display_info *w32_term_init (Lisp_Object,
+-					       char *, char *);
+-extern bool w32_defined_color (struct frame *, const char *, Emacs_Color *,
+-                               bool, bool);
++extern struct w32_display_info *w32_term_init (Lisp_Object, char *,
++					       char *);
++extern bool w32_defined_color (struct frame *, const char *,
++			       Emacs_Color *, bool, bool);
+ extern int w32_display_pixel_height (struct w32_display_info *);
+ extern int w32_display_pixel_width (struct w32_display_info *);
+ extern void initialize_frame_menubar (struct frame *);
+ extern void w32_dialog_in_progress (Lisp_Object in_progress);
+ extern void w32_query_frame_background_color (struct frame *f,
+-                                              Emacs_Color *bgcolor);
++					      Emacs_Color *bgcolor);
+ 
+ extern void w32_make_frame_visible (struct frame *f);
+ extern void w32_make_frame_invisible (struct frame *f);
+@@ -267,29 +279,29 @@ #define CP_DEFAULT 1004
+ 
+ /* w32reg.c */
+ extern const char *w32_get_string_resource (void *v_rdb,
+-                                            const char *name,
+-                                            const char *class);
++					    const char *name,
++					    const char *class);
+ 
+ /* w32fns.c */
+ extern frame_parm_handler w32_frame_parm_handlers[];
+-extern void w32_default_font_parameter (struct frame* f, Lisp_Object parms);
++extern void w32_default_font_parameter (struct frame *f,
++					Lisp_Object parms);
+ extern Lisp_Object w32_process_dnd_data (int format, void *pDataObj);
+ extern void w32_register_for_sleep_notifications (void);
+-
+ 
+ #define PIX_TYPE COLORREF
+ 
+ /* Each W32 frame object points to its own struct w32_display object
+-   in the output_data.w32 field.  The w32_display structure contains all
+-   the information that is specific to W32 windows.  */
++   in the output_data.w32 field.  The w32_display structure contains
++   all the information that is specific to W32 windows.  */
+ 
+ /* Put some things in x_output for compatibility.
+    NTEMACS_TODO: Move all common things here to eliminate unnecessary
+    diffs between X and w32 code.  */
+ struct x_output
+ {
+-  /* Keep track of focus.  May be EXPLICIT if we received a FocusIn for this
+-     frame, or IMPLICIT if we received an EnterNotify.
++  /* Keep track of focus.  May be EXPLICIT if we received a FocusIn
++     for this frame, or IMPLICIT if we received an EnterNotify.
+      FocusOut and LeaveNotify clears EXPLICIT/IMPLICIT. */
+   int focus_state;
+ };
+@@ -297,11 +309,11 @@ #define PIX_TYPE COLORREF
+ enum
+ {
+   /* Values for focus_state, used as bit mask.
+-     EXPLICIT means we received a FocusIn for the frame and know it has
+-     the focus.  IMPLICIT means we received an EnterNotify and the frame
+-     may have the focus if no window manager is running.
++     EXPLICIT means we received a FocusIn for the frame and know it
++     has the focus.  IMPLICIT means we received an EnterNotify and the
++     frame may have the focus if no window manager is running.
+      FocusOut and LeaveNotify clears EXPLICIT/IMPLICIT. */
+-  FOCUS_NONE     = 0,
++  FOCUS_NONE = 0,
+   FOCUS_IMPLICIT = 1,
+   FOCUS_EXPLICIT = 2
+ };
+@@ -318,7 +330,7 @@ #define PIX_TYPE COLORREF
+   HPALETTE old_palette;
+ 
+   /* Here are the Graphics Contexts for the default font.  */
+-  Emacs_GC *cursor_gc;			/* cursor drawing */
++  Emacs_GC *cursor_gc; /* cursor drawing */
+ 
+   /* The window used for this frame.
+      May be zero while the frame object is being created
+@@ -404,11 +416,10 @@ #define PIX_TYPE COLORREF
+   {
+     Emacs_GC *gc;
+     unsigned long pixel;
+-  }
+-  black_relief, white_relief;
++  } black_relief, white_relief;
+ 
+   /* The background for which the above relief GCs were set up.
+-     They are changed only when a different background is involved.  */
++     They are changed only when a different background is involved. */
+   unsigned long relief_background;
+ 
+   /* Frame geometry and full-screen mode before it was resized by
+@@ -438,6 +449,21 @@ #define PIX_TYPE COLORREF
+   /* Whether or not this frame should be double buffered.  */
+   unsigned want_paint_buffer : 1;
+ 
++  /* Dirty rectangle tracking for partial back buffer flips.  */
++  unsigned has_dirty_rect : 1;
++  RECT dirty_rect;
++
++  /* D3D11/DXGI GPU-accelerated swap chain.  */
++  IDXGISwapChain1 *dxgi_swap_chain;
++  IDXGISurface1 *dxgi_surface;
++  unsigned use_d3d : 1;
++
++  /* When set, paint_dc is the swap chain surface DC (acquired via
++     IDXGISurface1::GetDC).  Drawing goes directly to the swap chain
++     back buffer — no intermediate GDI bitmap, no BitBlt at present
++     time.  Cleared when paint_dc is a GDI memory bitmap DC.  */
++  unsigned d3d_direct_dc : 1;
++
+ #define MAX_TOUCH_POINTS 10
+   /* Array of dwIDs of presently active touch points, or -1 when
+      unpopulated.  */
+@@ -450,8 +476,8 @@ #define MAX_TOUCH_POINTS 10
+      frame.  */
+   EMACS_INT touch_base;
+ 
+-  /* Windows identifier of any touch point reserved for the tool bar, or
+-     -1.  */
++  /* Windows identifier of any touch point reserved for the tool bar,
++     or -1.  */
+   DWORD tool_bar_dwID;
+ };
+ 
+@@ -466,14 +492,16 @@ #define FRAME_NATIVE_WINDOW(f) FRAME_W32_WINDOW (f)
+ 
+ #define FRAME_FONT(f) ((f)->output_data.w32->font)
+ #define FRAME_FONTSET(f) ((f)->output_data.w32->fontset)
+-#define FRAME_BASELINE_OFFSET(f) ((f)->output_data.w32->baseline_offset)
++#define FRAME_BASELINE_OFFSET(f) \
++  ((f)->output_data.w32->baseline_offset)
+ 
+-/* This gives the w32_display_info structure for the display F is on.  */
++/* This gives the w32_display_info structure for the display F is on.
++ */
+ #define FRAME_DISPLAY_INFO(f) ((void) (f), (&one_w32_display_info))
+ 
+-#define FRAME_NORMAL_PLACEMENT(F) ((F)->output_data.w32->normal_placement)
+-#define FRAME_PREV_FSMODE(F)      ((F)->output_data.w32->prev_fsmode)
+-
++#define FRAME_NORMAL_PLACEMENT(F) \
++  ((F)->output_data.w32->normal_placement)
++#define FRAME_PREV_FSMODE(F) ((F)->output_data.w32->prev_fsmode)
+ 
+ /* W32-specific scroll bar stuff.  */
+ 
+@@ -485,15 +513,16 @@ #define FRAME_PREV_FSMODE(F)      ((F)->output_data.w32->prev_fsmode)
+    We use struct scroll_bar as a template for accessing fields of the
+    vector.  */
+ 
+-struct scroll_bar {
+-
++struct scroll_bar
++{
+   /* This field is shared by all vectors.  */
+   struct vectorlike_header header;
+ 
+   /* The window we're a scroll bar for.  */
+   Lisp_Object window;
+ 
+-  /* The next and previous in the chain of scroll bars in this frame.  */
++  /* The next and previous in the chain of scroll bars in this frame.
++   */
+   Lisp_Object next, prev;
+ 
+   /* The window representing this scroll bar.  Since this is a full
+@@ -503,8 +532,8 @@ #define FRAME_PREV_FSMODE(F)      ((F)->output_data.w32->prev_fsmode)
+   /* Same as above for the widget.  */
+   Lisp_Object w32_widget_low, w32_widget_high;
+ 
+-  /* The position and size of the scroll bar in pixels, relative to the
+-     frame.  */
++  /* The position and size of the scroll bar in pixels, relative to
++     the frame.  */
+   int top, left, width, height;
+ 
+   /* The starting and ending positions of the handle, relative to the
+@@ -515,8 +544,8 @@ #define FRAME_PREV_FSMODE(F)      ((F)->output_data.w32->prev_fsmode)
+      These are not actually the locations where the beginning and end
+      are drawn; in order to keep handles from becoming invisible when
+      editing large files, we establish a minimum height by always
+-     drawing handle bottoms VERTICAL_SCROLL_BAR_MIN_HANDLE pixels below
+-     where they would be normally; the bottom and top are in a
++     drawing handle bottoms VERTICAL_SCROLL_BAR_MIN_HANDLE pixels
++     below where they would be normally; the bottom and top are in a
+      different coordinate system.  */
+   int start, end;
+ 
+@@ -530,40 +559,48 @@ #define FRAME_PREV_FSMODE(F)      ((F)->output_data.w32->prev_fsmode)
+   bool horizontal;
+ };
+ 
+-/* Turning a lisp vector value into a pointer to a struct scroll_bar.  */
++/* Turning a lisp vector value into a pointer to a struct scroll_bar.
++ */
+ #define XSCROLL_BAR(vec) ((struct scroll_bar *) XVECTOR (vec))
+ 
+ #ifdef _WIN64
+ /* Building a 64-bit C integer from two 32-bit lisp integers.  */
+-#define SCROLL_BAR_PACK(low, high) (XFIXNUM (high) << 32 | XFIXNUM (low))
+-
+-/* Setting two lisp integers to the low and high words of a 64-bit C int.  */
+-#define SCROLL_BAR_UNPACK(low, high, int64) \
+-  (XSETINT ((low),   ((DWORDLONG)(int64))        & 0xffffffff), \
+-   XSETINT ((high), ((DWORDLONG)(int64) >> 32) & 0xffffffff))
+-#else  /* not _WIN64 */
+-/* Building a 32-bit C unsigned integer from two 16-bit lisp integers.  */
+-#define SCROLL_BAR_PACK(low, high) ((UINT_PTR)(XFIXNUM (high) << 16 | XFIXNUM (low)))
+-
+-/* Setting two lisp integers to the low and high words of a 32-bit C int.  */
+-#define SCROLL_BAR_UNPACK(low, high, int32) \
+-  (XSETINT ((low),   (int32)        & 0xffff), \
+-   XSETINT ((high), ((int32) >> 16) & 0xffff))
+-#endif	/* not _WIN64 */
+-
+-/* Extract the window id of the scroll bar from a struct scroll_bar.  */
+-#define SCROLL_BAR_W32_WINDOW(ptr) \
+-  ((Window) SCROLL_BAR_PACK ((ptr)->w32_window_low, (ptr)->w32_window_high))
++# define SCROLL_BAR_PACK(low, high) \
++   (XFIXNUM (high) << 32 | XFIXNUM (low))
++
++/* Setting two lisp integers to the low and high words of a 64-bit C
++ * int.  */
++# define SCROLL_BAR_UNPACK(low, high, int64)             \
++   (XSETINT ((low), ((DWORDLONG) (int64)) & 0xffffffff), \
++    XSETINT ((high), ((DWORDLONG) (int64) >> 32) & 0xffffffff))
++#else /* not _WIN64 */
++/* Building a 32-bit C unsigned integer from two 16-bit lisp integers.
++ */
++# define SCROLL_BAR_PACK(low, high) \
++   ((UINT_PTR) (XFIXNUM (high) << 16 | XFIXNUM (low)))
++
++/* Setting two lisp integers to the low and high words of a 32-bit C
++ * int.  */
++# define SCROLL_BAR_UNPACK(low, high, int32) \
++   (XSETINT ((low), (int32) & 0xffff),       \
++    XSETINT ((high), ((int32) >> 16) & 0xffff))
++#endif /* not _WIN64 */
++
++/* Extract the window id of the scroll bar from a struct scroll_bar.
++ */
++#define SCROLL_BAR_W32_WINDOW(ptr)                  \
++  ((Window) SCROLL_BAR_PACK ((ptr)->w32_window_low, \
++			     (ptr)->w32_window_high))
+ 
+ /* Store a window id in a struct scroll_bar.  */
+-#define SET_SCROLL_BAR_W32_WINDOW(ptr, id) \
+-  (SCROLL_BAR_UNPACK ((ptr)->w32_window_low, (ptr)->w32_window_high, (intptr_t) id))
++#define SET_SCROLL_BAR_W32_WINDOW(ptr, id)                           \
++  (SCROLL_BAR_UNPACK ((ptr)->w32_window_low, (ptr)->w32_window_high, \
++		      (intptr_t) id))
+ 
+ /* Return the inside width of a vertical scroll bar, given the outside
+    width.  */
+-#define VERTICAL_SCROLL_BAR_INSIDE_WIDTH(f,width)	\
+-  ((width)						\
+-   - VERTICAL_SCROLL_BAR_LEFT_BORDER			\
++#define VERTICAL_SCROLL_BAR_INSIDE_WIDTH(f, width) \
++  ((width) - VERTICAL_SCROLL_BAR_LEFT_BORDER       \
+    - VERTICAL_SCROLL_BAR_RIGHT_BORDER)
+ 
+ /* Return the length of the rectangle within which the top of the
+@@ -573,19 +610,20 @@ #define VERTICAL_SCROLL_BAR_INSIDE_WIDTH(f,width)	\
+    This is the real range of motion for the scroll bar, so when we're
+    scaling buffer positions to scroll bar positions, we use this, not
+    VERTICAL_SCROLL_BAR_INSIDE_HEIGHT.  */
+-#define VERTICAL_SCROLL_BAR_TOP_RANGE(f,height)				\
+-  (VERTICAL_SCROLL_BAR_INSIDE_HEIGHT (f, height) - VERTICAL_SCROLL_BAR_MIN_HANDLE)
++#define VERTICAL_SCROLL_BAR_TOP_RANGE(f, height) \
++  (VERTICAL_SCROLL_BAR_INSIDE_HEIGHT (f, height) \
++   - VERTICAL_SCROLL_BAR_MIN_HANDLE)
+ 
+ /* Return the inside height of vertical scroll bar, given the outside
+    height.  See VERTICAL_SCROLL_BAR_TOP_RANGE too.  */
+-#define VERTICAL_SCROLL_BAR_INSIDE_HEIGHT(f,height)			\
+-  ((height) - VERTICAL_SCROLL_BAR_TOP_BORDER - VERTICAL_SCROLL_BAR_BOTTOM_BORDER)
++#define VERTICAL_SCROLL_BAR_INSIDE_HEIGHT(f, height) \
++  ((height) - VERTICAL_SCROLL_BAR_TOP_BORDER         \
++   - VERTICAL_SCROLL_BAR_BOTTOM_BORDER)
+ 
+ /* Return the inside height of a horizontal scroll bar, given the
+    outside height.  */
+-#define HORIZONTAL_SCROLL_BAR_INSIDE_HEIGHT(f,height) \
+-  ((height)					      \
+-   - HORIZONTAL_SCROLL_BAR_TOP_BORDER		      \
++#define HORIZONTAL_SCROLL_BAR_INSIDE_HEIGHT(f, height) \
++  ((height) - HORIZONTAL_SCROLL_BAR_TOP_BORDER         \
+    - HORIZONTAL_SCROLL_BAR_BOTTOM_BORDER)
+ 
+ /* Return the length of the rectangle within which the left of the
+@@ -595,14 +633,15 @@ #define HORIZONTAL_SCROLL_BAR_INSIDE_HEIGHT(f,height) \
+    This is the real range of motion for the scroll bar, so when we're
+    scaling buffer positions to scroll bar positions, we use this, not
+    HORIZONTAL_SCROLL_BAR_INSIDE_WIDTH.  */
+-#define HORIZONTAL_SCROLL_BAR_LEFT_RANGE(f,width)			\
+-  (HORIZONTAL_SCROLL_BAR_INSIDE_WIDTH (f, width) - HORIZONTAL_SCROLL_BAR_MIN_HANDLE)
++#define HORIZONTAL_SCROLL_BAR_LEFT_RANGE(f, width) \
++  (HORIZONTAL_SCROLL_BAR_INSIDE_WIDTH (f, width)   \
++   - HORIZONTAL_SCROLL_BAR_MIN_HANDLE)
+ 
+ /* Return the inside width of horizontal scroll bar, given the outside
+    width.  See HORIZONTAL_SCROLL_BAR_LEFT_RANGE too.  */
+-#define HORIZONTAL_SCROLL_BAR_INSIDE_WIDTH(f,width)			\
+-  ((width) - HORIZONTAL_SCROLL_BAR_LEFT_BORDER - HORIZONTAL_SCROLL_BAR_RIGHT_BORDER)
+-
++#define HORIZONTAL_SCROLL_BAR_INSIDE_WIDTH(f, width) \
++  ((width) - HORIZONTAL_SCROLL_BAR_LEFT_BORDER       \
++   - HORIZONTAL_SCROLL_BAR_RIGHT_BORDER)
+ 
+ /* Border widths for scroll bars.
+ 
+@@ -617,126 +656,138 @@ #define HORIZONTAL_SCROLL_BAR_INSIDE_WIDTH(f,width)			\
+    inset the handle boundaries from the scroll bar edges.  */
+ #define VERTICAL_SCROLL_BAR_LEFT_BORDER (0)
+ #define VERTICAL_SCROLL_BAR_RIGHT_BORDER (0)
+-#define VERTICAL_SCROLL_BAR_TOP_BORDER (vertical_scroll_bar_top_border)
+-#define VERTICAL_SCROLL_BAR_BOTTOM_BORDER (vertical_scroll_bar_bottom_border)
+-
+-#define HORIZONTAL_SCROLL_BAR_LEFT_BORDER (horizontal_scroll_bar_left_border)
+-#define HORIZONTAL_SCROLL_BAR_RIGHT_BORDER (horizontal_scroll_bar_right_border)
++#define VERTICAL_SCROLL_BAR_TOP_BORDER \
++  (vertical_scroll_bar_top_border)
++#define VERTICAL_SCROLL_BAR_BOTTOM_BORDER \
++  (vertical_scroll_bar_bottom_border)
++
++#define HORIZONTAL_SCROLL_BAR_LEFT_BORDER \
++  (horizontal_scroll_bar_left_border)
++#define HORIZONTAL_SCROLL_BAR_RIGHT_BORDER \
++  (horizontal_scroll_bar_right_border)
+ #define HORIZONTAL_SCROLL_BAR_TOP_BORDER (0)
+ #define HORIZONTAL_SCROLL_BAR_BOTTOM_BORDER (0)
+ 
+ /* Minimum lengths for scroll bar handles, in pixels.  */
+-#define VERTICAL_SCROLL_BAR_MIN_HANDLE (vertical_scroll_bar_min_handle)
+-#define HORIZONTAL_SCROLL_BAR_MIN_HANDLE (horizontal_scroll_bar_min_handle)
++#define VERTICAL_SCROLL_BAR_MIN_HANDLE \
++  (vertical_scroll_bar_min_handle)
++#define HORIZONTAL_SCROLL_BAR_MIN_HANDLE \
++  (horizontal_scroll_bar_min_handle)
+ 
+-struct frame;  /* from frame.h */
++struct frame; /* from frame.h */
+ 
+ extern void w32_fill_rect (struct frame *, HDC, COLORREF, RECT *);
++extern void w32_note_drawn_rect (struct frame *, int, int, int, int);
+ extern void w32_clear_window (struct frame *);
+ 
+-#define w32_fill_area(f,hdc,pix,x,y,nx,ny) \
+-do { \
+-    RECT rect; \
+-    rect.left = x; \
+-    rect.top = y; \
+-    rect.right = x + nx; \
+-    rect.bottom = y + ny; \
+-    w32_fill_rect (f,hdc,pix,&rect); \
+-} while (0)
+-
+-#define w32_fill_area_abs(f,hdc,pix,x0,y0,x1,y1) \
+-do { \
+-    RECT rect; \
+-    rect.left = x0; \
+-    rect.top = y0; \
+-    rect.right = x1; \
+-    rect.bottom = y1; \
+-    w32_fill_rect (f,hdc,pix,&rect); \
+-} while (0)
+-
+-#define w32_clear_rect(f,hdc,lprect) \
++#define w32_fill_area(f, hdc, pix, x, y, nx, ny) \
++  do                                             \
++    {                                            \
++      RECT rect;                                 \
++      rect.left = x;                             \
++      rect.top = y;                              \
++      rect.right = x + nx;                       \
++      rect.bottom = y + ny;                      \
++      w32_fill_rect (f, hdc, pix, &rect);        \
++    }                                            \
++  while (0)
++
++#define w32_fill_area_abs(f, hdc, pix, x0, y0, x1, y1) \
++  do                                                   \
++    {                                                  \
++      RECT rect;                                       \
++      rect.left = x0;                                  \
++      rect.top = y0;                                   \
++      rect.right = x1;                                 \
++      rect.bottom = y1;                                \
++      w32_fill_rect (f, hdc, pix, &rect);              \
++    }                                                  \
++  while (0)
++
++#define w32_clear_rect(f, hdc, lprect) \
+   w32_fill_rect (f, hdc, FRAME_BACKGROUND_PIXEL (f), lprect)
+ 
+-#define w32_clear_area(f,hdc,px,py,nx,ny) \
++#define w32_clear_area(f, hdc, px, py, nx, ny) \
+   w32_fill_area (f, hdc, FRAME_BACKGROUND_PIXEL (f), px, py, nx, ny)
+ 
+ /* Define for earlier versions of Visual C */
+ #ifndef WM_MOUSEWHEEL
+-#define WM_MOUSEWHEEL 		       (WM_MOUSELAST + 1)
++# define WM_MOUSEWHEEL (WM_MOUSELAST + 1)
+ #endif /* WM_MOUSEWHEEL */
+ #ifndef MSH_MOUSEWHEEL
+-#define MSH_MOUSEWHEEL		       "MSWHEEL_ROLLMSG"
++# define MSH_MOUSEWHEEL "MSWHEEL_ROLLMSG"
+ #endif /* MSH_MOUSEWHEEL */
+ #ifndef WM_XBUTTONDOWN
+-#define WM_XBUTTONDOWN                 (WM_MOUSEWHEEL + 1)
+-#define WM_XBUTTONUP                   (WM_MOUSEWHEEL + 2)
++# define WM_XBUTTONDOWN (WM_MOUSEWHEEL + 1)
++# define WM_XBUTTONUP (WM_MOUSEWHEEL + 2)
+ #endif /* WM_XBUTTONDOWN */
+ #ifndef WM_MOUSEHWHEEL
+-#define WM_MOUSEHWHEEL                 (WM_MOUSEWHEEL + 4)
++# define WM_MOUSEHWHEEL (WM_MOUSEWHEEL + 4)
+ #endif /* WM_MOUSEHWHEEL  */
+ #ifndef WM_APPCOMMAND
+-#define WM_APPCOMMAND 0x319
+-#define GET_APPCOMMAND_LPARAM(lParam)  (HIWORD(lParam) & 0x7fff)
++# define WM_APPCOMMAND 0x319
++# define GET_APPCOMMAND_LPARAM(lParam) (HIWORD (lParam) & 0x7fff)
+ #endif
+ #ifndef WM_UNICHAR
+-#define WM_UNICHAR 0x109
++# define WM_UNICHAR 0x109
+ #endif
+ #ifndef UNICODE_NOCHAR
+-#define UNICODE_NOCHAR 0xFFFF
++# define UNICODE_NOCHAR 0xFFFF
+ #endif
+ 
+-#define WM_EMACS_START                 (WM_USER + 1)
+-#define WM_EMACS_KILL                  (WM_EMACS_START + 0)
+-#define WM_EMACS_CREATEWINDOW          (WM_EMACS_START + 1)
+-#define WM_EMACS_DONE                  (WM_EMACS_START + 2)
+-#define WM_EMACS_CREATEVSCROLLBAR      (WM_EMACS_START + 3)
+-#define WM_EMACS_CREATEHSCROLLBAR      (WM_EMACS_START + 4)
+-#define WM_EMACS_SHOWWINDOW            (WM_EMACS_START + 5)
+-#define WM_EMACS_SETWINDOWPOS          (WM_EMACS_START + 6)
+-#define WM_EMACS_DESTROYWINDOW         (WM_EMACS_START + 7)
+-#define WM_EMACS_TRACKPOPUPMENU        (WM_EMACS_START + 8)
+-#define WM_EMACS_SETFOCUS              (WM_EMACS_START + 9)
+-#define WM_EMACS_SETFOREGROUND         (WM_EMACS_START + 10)
+-#define WM_EMACS_SETLOCALE             (WM_EMACS_START + 11)
+-#define WM_EMACS_SETKEYBOARDLAYOUT     (WM_EMACS_START + 12)
+-#define WM_EMACS_REGISTER_HOT_KEY      (WM_EMACS_START + 13)
+-#define WM_EMACS_UNREGISTER_HOT_KEY    (WM_EMACS_START + 14)
+-#define WM_EMACS_TOGGLE_LOCK_KEY       (WM_EMACS_START + 15)
+-#define WM_EMACS_TRACK_CARET           (WM_EMACS_START + 16)
+-#define WM_EMACS_DESTROY_CARET         (WM_EMACS_START + 17)
+-#define WM_EMACS_SHOW_CARET            (WM_EMACS_START + 18)
+-#define WM_EMACS_HIDE_CARET            (WM_EMACS_START + 19)
+-#define WM_EMACS_SETCURSOR             (WM_EMACS_START + 20)
+-#define WM_EMACS_SHOWCURSOR            (WM_EMACS_START + 21)
+-#define WM_EMACS_PAINT                 (WM_EMACS_START + 22)
+-#define WM_EMACS_BRINGTOTOP            (WM_EMACS_START + 23)
+-#define WM_EMACS_INPUT_READY           (WM_EMACS_START + 24)
+-#define WM_EMACS_FILENOTIFY            (WM_EMACS_START + 25)
+-#define WM_EMACS_IME_STATUS            (WM_EMACS_START + 26)
+-#define WM_EMACS_DRAGOVER              (WM_EMACS_START + 27)
+-#define WM_EMACS_DROP                  (WM_EMACS_START + 28)
+-#define WM_EMACS_END                   (WM_EMACS_START + 29)
+-#define WM_EMACS_SET_TOOLKIT_THEME     (WM_EMACS_START + 30)
+-
+-#define WND_FONTWIDTH_INDEX    (0)
+-#define WND_LINEHEIGHT_INDEX   (4)
+-#define WND_BORDER_INDEX       (8)
+-#define WND_VSCROLLBAR_INDEX   (12)
+-#define WND_HSCROLLBAR_INDEX   (16)
+-#define WND_BACKGROUND_INDEX   (20)
+-#define WND_LAST_INDEX         (24)
+-
+-#define WND_EXTRA_BYTES     (WND_LAST_INDEX)
++#define WM_EMACS_START (WM_USER + 1)
++#define WM_EMACS_KILL (WM_EMACS_START + 0)
++#define WM_EMACS_CREATEWINDOW (WM_EMACS_START + 1)
++#define WM_EMACS_DONE (WM_EMACS_START + 2)
++#define WM_EMACS_CREATEVSCROLLBAR (WM_EMACS_START + 3)
++#define WM_EMACS_CREATEHSCROLLBAR (WM_EMACS_START + 4)
++#define WM_EMACS_SHOWWINDOW (WM_EMACS_START + 5)
++#define WM_EMACS_SETWINDOWPOS (WM_EMACS_START + 6)
++#define WM_EMACS_DESTROYWINDOW (WM_EMACS_START + 7)
++#define WM_EMACS_TRACKPOPUPMENU (WM_EMACS_START + 8)
++#define WM_EMACS_SETFOCUS (WM_EMACS_START + 9)
++#define WM_EMACS_SETFOREGROUND (WM_EMACS_START + 10)
++#define WM_EMACS_SETLOCALE (WM_EMACS_START + 11)
++#define WM_EMACS_SETKEYBOARDLAYOUT (WM_EMACS_START + 12)
++#define WM_EMACS_REGISTER_HOT_KEY (WM_EMACS_START + 13)
++#define WM_EMACS_UNREGISTER_HOT_KEY (WM_EMACS_START + 14)
++#define WM_EMACS_TOGGLE_LOCK_KEY (WM_EMACS_START + 15)
++#define WM_EMACS_TRACK_CARET (WM_EMACS_START + 16)
++#define WM_EMACS_DESTROY_CARET (WM_EMACS_START + 17)
++#define WM_EMACS_SHOW_CARET (WM_EMACS_START + 18)
++#define WM_EMACS_HIDE_CARET (WM_EMACS_START + 19)
++#define WM_EMACS_SETCURSOR (WM_EMACS_START + 20)
++#define WM_EMACS_SHOWCURSOR (WM_EMACS_START + 21)
++#define WM_EMACS_PAINT (WM_EMACS_START + 22)
++#define WM_EMACS_BRINGTOTOP (WM_EMACS_START + 23)
++#define WM_EMACS_INPUT_READY (WM_EMACS_START + 24)
++#define WM_EMACS_FILENOTIFY (WM_EMACS_START + 25)
++#define WM_EMACS_IME_STATUS (WM_EMACS_START + 26)
++#define WM_EMACS_DRAGOVER (WM_EMACS_START + 27)
++#define WM_EMACS_DROP (WM_EMACS_START + 28)
++#define WM_EMACS_END (WM_EMACS_START + 29)
++#define WM_EMACS_SET_TOOLKIT_THEME (WM_EMACS_START + 30)
++
++#define WND_FONTWIDTH_INDEX (0)
++#define WND_LINEHEIGHT_INDEX (4)
++#define WND_BORDER_INDEX (8)
++#define WND_VSCROLLBAR_INDEX (12)
++#define WND_HSCROLLBAR_INDEX (16)
++#define WND_BACKGROUND_INDEX (20)
++#define WND_LAST_INDEX (24)
++
++#define WND_EXTRA_BYTES (WND_LAST_INDEX)
+ 
+ extern DWORD dwWindowsThreadId;
+ extern HANDLE hWindowsThread;
+ extern DWORD dwMainThreadId;
+ extern HANDLE hMainThread;
+ 
+-typedef struct W32Msg {
+-    MSG msg;
+-    DWORD dwModifiers;
+-    RECT rect;
++typedef struct W32Msg
++{
++  MSG msg;
++  DWORD dwModifiers;
++  RECT rect;
+ } W32Msg;
+ 
+ extern BOOL prepend_msg (W32Msg *lpmsg);
+@@ -746,10 +797,10 @@ #define WND_EXTRA_BYTES     (WND_LAST_INDEX)
+    complete deferred messages out of order.  */
+ typedef struct deferred_msg
+ {
+-  struct deferred_msg * next;
+-  W32Msg                w32msg;
+-  LRESULT               result;
+-  int                   completed;
++  struct deferred_msg *next;
++  W32Msg w32msg;
++  LRESULT result;
++  int completed;
+ } deferred_msg;
+ 
+ extern CRITICAL_SECTION critsect;
+@@ -762,16 +813,17 @@ #define WND_EXTRA_BYTES     (WND_LAST_INDEX)
+ #define enter_crit() EnterCriticalSection (&critsect)
+ #define leave_crit() LeaveCriticalSection (&critsect)
+ 
+-extern void select_palette (struct frame * f, HDC hdc);
+-extern void deselect_palette (struct frame * f, HDC hdc);
+-extern HDC get_frame_dc (struct frame * f);
+-extern int release_frame_dc (struct frame * f, HDC hDC);
++extern void select_palette (struct frame *f, HDC hdc);
++extern void deselect_palette (struct frame *f, HDC hdc);
++extern HDC get_frame_dc (struct frame *f);
++extern int release_frame_dc (struct frame *f, HDC hDC);
+ 
+ extern int drain_message_queue (void);
+ 
+ extern BOOL get_next_msg (W32Msg *, BOOL);
+ extern BOOL post_msg (W32Msg *);
+-extern void complete_deferred_msg (HWND hwnd, UINT msg, LRESULT result);
++extern void complete_deferred_msg (HWND hwnd, UINT msg,
++				   LRESULT result);
+ 
+ extern BOOL parse_button (int, int, int *, int *);
+ 
+@@ -783,7 +835,8 @@ #define FILE_NOTIFICATIONS_SIZE 16384
+ /* Notifications come in sets.  We use a doubly linked list with a
+    sentinel to communicate those sets from the watching threads to the
+    main thread.  */
+-struct notifications_set {
++struct notifications_set
++{
+   LPBYTE notifications;
+   DWORD size;
+   void *desc;
+@@ -806,50 +859,50 @@ #define FILE_NOTIFICATIONS_SIZE 16384
+ extern void remove_w32_kbdhook (void);
+ extern void reset_w32_kbdhook_state (void);
+ extern int check_w32_winkey_state (int);
+-#define w32_kbdhook_active (os_subtype != OS_SUBTYPE_9X)
++# define w32_kbdhook_active (os_subtype != OS_SUBTYPE_9X)
+ #else
+-#define w32_kbdhook_active 0
++# define w32_kbdhook_active 0
+ #endif
+ 
+ /* Keypad command key support.  W32 doesn't have virtual keys defined
+-   for the function keys on the keypad (they are mapped to the standard
+-   function keys), so we define our own.  */
+-#define VK_NUMPAD_BEGIN		0x92
+-#define VK_NUMPAD_CLEAR		(VK_NUMPAD_BEGIN + 0)
+-#define VK_NUMPAD_ENTER		(VK_NUMPAD_BEGIN + 1)
+-#define VK_NUMPAD_PRIOR		(VK_NUMPAD_BEGIN + 2)
+-#define VK_NUMPAD_NEXT		(VK_NUMPAD_BEGIN + 3)
+-#define VK_NUMPAD_END		(VK_NUMPAD_BEGIN + 4)
+-#define VK_NUMPAD_HOME		(VK_NUMPAD_BEGIN + 5)
+-#define VK_NUMPAD_LEFT		(VK_NUMPAD_BEGIN + 6)
+-#define VK_NUMPAD_UP		(VK_NUMPAD_BEGIN + 7)
+-#define VK_NUMPAD_RIGHT		(VK_NUMPAD_BEGIN + 8)
+-#define VK_NUMPAD_DOWN		(VK_NUMPAD_BEGIN + 9)
+-#define VK_NUMPAD_INSERT	(VK_NUMPAD_BEGIN + 10)
+-#define VK_NUMPAD_DELETE	(VK_NUMPAD_BEGIN + 11)
++   for the function keys on the keypad (they are mapped to the
++   standard function keys), so we define our own.  */
++#define VK_NUMPAD_BEGIN 0x92
++#define VK_NUMPAD_CLEAR (VK_NUMPAD_BEGIN + 0)
++#define VK_NUMPAD_ENTER (VK_NUMPAD_BEGIN + 1)
++#define VK_NUMPAD_PRIOR (VK_NUMPAD_BEGIN + 2)
++#define VK_NUMPAD_NEXT (VK_NUMPAD_BEGIN + 3)
++#define VK_NUMPAD_END (VK_NUMPAD_BEGIN + 4)
++#define VK_NUMPAD_HOME (VK_NUMPAD_BEGIN + 5)
++#define VK_NUMPAD_LEFT (VK_NUMPAD_BEGIN + 6)
++#define VK_NUMPAD_UP (VK_NUMPAD_BEGIN + 7)
++#define VK_NUMPAD_RIGHT (VK_NUMPAD_BEGIN + 8)
++#define VK_NUMPAD_DOWN (VK_NUMPAD_BEGIN + 9)
++#define VK_NUMPAD_INSERT (VK_NUMPAD_BEGIN + 10)
++#define VK_NUMPAD_DELETE (VK_NUMPAD_BEGIN + 11)
+ 
+ #ifndef VK_LWIN
+ /* Older compiler environments don't have these defined.  */
+-#define VK_LWIN			0x5B
+-#define VK_RWIN			0x5C
+-#define VK_APPS			0x5D
++# define VK_LWIN 0x5B
++# define VK_RWIN 0x5C
++# define VK_APPS 0x5D
+ #endif
+ 
+ /* Support for treating Windows and Apps keys as modifiers.  These
+-   constants must not overlap with any of the dwControlKeyState flags in
+-   KEY_EVENT_RECORD.  */
+-#define LEFT_WIN_PRESSED       0x8000
+-#define RIGHT_WIN_PRESSED      0x4000
+-#define APPS_PRESSED           0x2000
++   constants must not overlap with any of the dwControlKeyState flags
++   in KEY_EVENT_RECORD.  */
++#define LEFT_WIN_PRESSED 0x8000
++#define RIGHT_WIN_PRESSED 0x4000
++#define APPS_PRESSED 0x2000
+ 
+ /* The current ANSI input codepage for GUI sessions.  */
+ extern int w32_keyboard_codepage;
+ 
+-/* When compiling on Windows 9x/ME and NT 3.x, the following are not defined
+-   (even though they are supported on 98 and ME.  */
++/* When compiling on Windows 9x/ME and NT 3.x, the following are not
++   defined (even though they are supported on 98 and ME.  */
+ #ifndef WM_MOUSELEAVE
+-#define WM_MOUSELEAVE 0x02A3
+-#define TME_LEAVE 0x00000002;
++# define WM_MOUSELEAVE 0x02A3
++# define TME_LEAVE 0x00000002;
+ 
+ typedef struct tagTRACKMOUSEEVENT
+ {
+@@ -865,12 +918,9 @@ #define TME_LEAVE 0x00000002;
+ 
+ Emacs_GC *XCreateGC (void *, HWND, unsigned long, Emacs_GC *);
+ 
+-typedef DWORD (WINAPI * ClipboardSequence_Proc) (void);
+-typedef BOOL (WINAPI * AppendMenuW_Proc) (
+-    IN HMENU,
+-    IN UINT,
+-    IN UINT_PTR,
+-    IN LPCWSTR);
++typedef DWORD (WINAPI *ClipboardSequence_Proc) (void);
++typedef BOOL (WINAPI *AppendMenuW_Proc) (IN HMENU, IN UINT,
++					 IN UINT_PTR, IN LPCWSTR);
+ 
+ extern HWND w32_system_caret_hwnd;
+ extern int w32_system_caret_height;
+@@ -883,28 +933,28 @@ #define TME_LEAVE 0x00000002;
+ extern Window tip_window;
+ 
+ #if EMACSDEBUG
+-extern const char*
+-w32_name_of_message (UINT msg);
++extern const char *w32_name_of_message (UINT msg);
+ #endif /* EMACSDEBUG */
+ 
+ #ifdef NTGUI_UNICODE
+ extern Lisp_Object ntgui_encode_system (Lisp_Object str);
+-#define GUISTR(x) (L ## x)
+-#define GUI_ENCODE_FILE GUI_ENCODE_SYSTEM
+-#define GUI_ENCODE_SYSTEM(x) ntgui_encode_system (x)
+-#define GUI_FN(fn) fn ## W
++# define GUISTR(x) (L##x)
++# define GUI_ENCODE_FILE GUI_ENCODE_SYSTEM
++# define GUI_ENCODE_SYSTEM(x) ntgui_encode_system (x)
++# define GUI_FN(fn) fn##W
+ typedef wchar_t guichar_t;
+ #else /* !NTGUI_UNICODE */
+-#define GUISTR(x) x
+-#define GUI_ENCODE_FILE ENCODE_FILE
+-#define GUI_ENCODE_SYSTEM ENCODE_SYSTEM
+-#define GUI_FN(fn) fn
++# define GUISTR(x) x
++# define GUI_ENCODE_FILE ENCODE_FILE
++# define GUI_ENCODE_SYSTEM ENCODE_SYSTEM
++# define GUI_FN(fn) fn
+ typedef char guichar_t;
+ #endif /* NTGUI_UNICODE */
+ 
+-#define GUI_SDATA(x) ((guichar_t*) SDATA (x))
++#define GUI_SDATA(x) ((guichar_t *) SDATA (x))
+ 
+-extern Lisp_Object w32_popup_dialog (struct frame *, Lisp_Object, Lisp_Object);
++extern Lisp_Object w32_popup_dialog (struct frame *, Lisp_Object,
++				     Lisp_Object);
+ extern void w32_arrow_cursor (void);
+ extern void w32_release_paint_buffer (struct frame *);
+ extern void w32_flip_buffers_if_dirty (struct frame *);
+diff --git a/src/w32xfns.c b/src/w32xfns.c
+index f920e40734..2ea1645c24 100644
+--- a/src/w32xfns.c
++++ b/src/w32xfns.c
+@@ -1,6 +1,6 @@
+-/* Functions taken directly from X sources for use with the Microsoft Windows API.
+-   Copyright (C) 1989, 1992-1995, 1999, 2001-2026 Free Software
+-   Foundation, Inc.
++/* Functions taken directly from X sources for use with the Microsoft
++Windows API. Copyright (C) 1989, 1992-1995, 1999, 2001-2026 Free
++Software Foundation, Inc.
+ 
+ This file is part of GNU Emacs.
+ 
+@@ -15,7 +15,7 @@
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+-along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
+ 
+ #include <config.h>
+ #include <signal.h>
+@@ -29,16 +29,18 @@
+ # define _WIN32_WINNT 0x0501
+ /* mingw.org's MinGW headers mistakenly omit this enumeration: */
+ # ifndef MINGW_W64
+-typedef enum _WTS_VIRTUAL_CLASS {
++typedef enum _WTS_VIRTUAL_CLASS
++{
+   WTSVirtualClientData,
+   WTSVirtualFileHandle
+ } WTS_VIRTUAL_CLASS;
+ # endif
+-#include <wtsapi32.h>	/* for WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK */
+-#endif	/* WINDOWSNT */
++# include <wtsapi32.h> /* for WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK */
++#endif		       /* WINDOWSNT */
+ 
+ #include "lisp.h"
+ #include "frame.h"
++#include "w32d3d.h"
+ #include "w32term.h"
+ 
+ #define myalloc(cb) GlobalAllocPtr (GPTR, cb)
+@@ -60,22 +62,25 @@ init_crit (void)
+   InitializeCriticalSection (&critsect);
+ 
+   /* For safety, input_available should only be reset by get_next_msg
+-     when the input queue is empty, so make it a manual reset event. */
++     when the input queue is empty, so make it a manual reset event.
++   */
+   input_available = CreateEvent (NULL, TRUE, FALSE, NULL);
+ 
+ #if HAVE_W32NOTIFY
+   /* Initialize the linked list of notifications sets that will be
+      used to communicate between the watching worker threads and the
+      main thread.  */
+-  notifications_set_head = malloc (sizeof(struct notifications_set));
++  notifications_set_head = malloc (sizeof (struct notifications_set));
+   if (notifications_set_head)
+     {
+-      memset (notifications_set_head, 0, sizeof(struct notifications_set));
+-      notifications_set_head->next
+-	= notifications_set_head->prev = notifications_set_head;
++      memset (notifications_set_head, 0,
++	      sizeof (struct notifications_set));
++      notifications_set_head->next = notifications_set_head->prev
++	= notifications_set_head;
+     }
+   else
+-    DebPrint(("Out of memory: can't initialize notifications sets."));
++    DebPrint (
++      ("Out of memory: can't initialize notifications sets."));
+ #endif
+ 
+ #ifdef WINDOWSNT
+@@ -85,9 +90,10 @@ init_crit (void)
+   /* interrupt_handle is signaled when quit (C-g) is detected, so that
+      blocking system calls can be interrupted.  We make it a manual
+      reset event, so that if we should ever have multiple threads
+-     performing system calls, they will all be interrupted (I'm guessing
+-     that would the right response).  Note that we use PulseEvent to
+-     signal this event, so that it never remains signaled.  */
++     performing system calls, they will all be interrupted (I'm
++     guessing that would the right response).  Note that we use
++     PulseEvent to signal this event, so that it never remains
++     signaled.  */
+   interrupt_handle = CreateEvent (NULL, TRUE, FALSE, NULL);
+ }
+ 
+@@ -110,7 +116,8 @@ delete_crit (void)
+ #if HAVE_W32NOTIFY
+   if (notifications_set_head)
+     {
+-      /* Free any remaining notifications set that could be left over.  */
++      /* Free any remaining notifications set that could be left over.
++       */
+       while (notifications_set_head->next != notifications_set_head)
+ 	{
+ 	  struct notifications_set *ns = notifications_set_head->next;
+@@ -145,8 +152,8 @@ select_palette (struct frame *f, HDC hdc)
+     return;
+ 
+   if (!NILP (Vw32_enable_palette))
+-    f->output_data.w32->old_palette =
+-      SelectPalette (hdc, display_info->palette, FALSE);
++    f->output_data.w32->old_palette
++      = SelectPalette (hdc, display_info->palette, FALSE);
+   else
+     f->output_data.w32->old_palette = NULL;
+ 
+@@ -154,9 +161,9 @@ select_palette (struct frame *f, HDC hdc)
+     {
+       Lisp_Object frame, framelist;
+       FOR_EACH_FRAME (framelist, frame)
+-	{
+-	  SET_FRAME_GARBAGED (XFRAME (frame));
+-	}
++      {
++	SET_FRAME_GARBAGED (XFRAME (frame));
++      }
+     }
+ }
+ 
+@@ -167,8 +174,8 @@ deselect_palette (struct frame *f, HDC hdc)
+     SelectPalette (hdc, f->output_data.w32->old_palette, FALSE);
+ }
+ 
+-/* Get a DC for frame and select palette for drawing; force an update of
+-   all frames if palette's mapping changes.  */
++/* Get a DC for frame and select palette for drawing; force an update
++   of all frames if palette's mapping changes.  */
+ HDC
+ get_frame_dc (struct frame *f)
+ {
+@@ -183,6 +190,51 @@ get_frame_dc (struct frame *f)
+   enter_crit ();
+   output = FRAME_OUTPUT_DATA (f);
+ 
++  /* If D3D11 swap chain is active and needs resize, handle it.
++     In d3d_direct_dc mode, release the surface DC first since DXGI
++     requires all back buffer references released before
++     ResizeBuffers.  */
++  if (output->use_d3d)
++    {
++      int width = FRAME_PIXEL_WIDTH (f);
++      int height = FRAME_PIXEL_HEIGHT (f);
++
++      if (output->paint_buffer_width != width
++	  || output->paint_buffer_height != height)
++	{
++	  if (output->d3d_direct_dc && output->paint_dc)
++	    {
++	      w32_d3d_release_dc (output);
++	      output->paint_dc = NULL;
++	    }
++	  if (w32_d3d_resize (output, width, height))
++	    {
++	      output->paint_buffer_width = width;
++	      output->paint_buffer_height = height;
++	      if (output->d3d_direct_dc)
++		{
++		  /* Re-acquire surface DC at new size.  */
++		  HDC new_dc = w32_d3d_acquire_dc (output);
++		  if (new_dc)
++		    {
++		      output->paint_dc = new_dc;
++		      output->paint_buffer_dirty = 1;
++		      return output->paint_dc;
++		    }
++		  /* DC re-acquisition failed; fall through to
++		     release and recreate below.  */
++		  w32_d3d_disable (output);
++		}
++	    }
++	  else
++	    {
++	      /* Resize failed; release everything and fall through
++		 to recreate.  */
++	      w32_d3d_disable (output);
++	    }
++	}
++    }
++
+   if (output->paint_dc)
+     {
+       if (output->paint_buffer_width != FRAME_PIXEL_WIDTH (f)
+@@ -207,6 +259,41 @@ get_frame_dc (struct frame *f)
+       if (!w32_disable_double_buffering
+ 	  && FRAME_OUTPUT_DATA (f)->want_paint_buffer)
+ 	{
++	  /* Try D3D11 swap chain with direct surface DC first.
++	     When successful, all drawing goes directly to the swap
++	     chain back buffer — no intermediate GDI bitmap, no
++	     BitBlt at present time.  */
++	  if (w32_d3d_available_p ()
++	      && w32_d3d_create_swap_chain (output,
++					    output->window_desc,
++					    FRAME_PIXEL_WIDTH (f),
++					    FRAME_PIXEL_HEIGHT (f)))
++	    {
++	      output->use_d3d = 1;
++	      paint_dc = w32_d3d_acquire_dc (output);
++	      if (paint_dc)
++		{
++		  output->d3d_direct_dc = 1;
++		  output->paint_dc = paint_dc;
++		  output->paint_buffer_handle = hdc;
++		  output->paint_buffer = (HBITMAP) 1; /* sentinel */
++		  output->paint_buffer_width = FRAME_PIXEL_WIDTH (f);
++		  output->paint_buffer_height
++		    = FRAME_PIXEL_HEIGHT (f);
++		  output->paint_buffer_dirty = 1;
++		  output->has_dirty_rect = 0;
++
++		  SET_FRAME_GARBAGED (f);
++
++		  return paint_dc;
++		}
++	      /* DC acquisition failed — fall through to GDI bitmap.
++	       */
++	    }
++
++	  /* Fallback: GDI memory bitmap as the persistent back
++	     buffer.  Used when D3D is unavailable or DC acquisition
++	     failed.  */
+ 	  back_buffer
+ 	    = CreateCompatibleBitmap (hdc, FRAME_PIXEL_WIDTH (f),
+ 				      FRAME_PIXEL_HEIGHT (f));
+@@ -226,8 +313,10 @@ get_frame_dc (struct frame *f)
+ 		  output->paint_buffer_handle = hdc;
+ 		  output->paint_buffer = back_buffer;
+ 		  output->paint_buffer_width = FRAME_PIXEL_WIDTH (f);
+-		  output->paint_buffer_height = FRAME_PIXEL_HEIGHT (f);
++		  output->paint_buffer_height
++		    = FRAME_PIXEL_HEIGHT (f);
+ 		  output->paint_buffer_dirty = 1;
++		  output->has_dirty_rect = 0;
+ 
+ 		  SET_FRAME_GARBAGED (f);
+ 
+@@ -244,10 +333,11 @@ get_frame_dc (struct frame *f)
+ release_frame_dc (struct frame *f, HDC hdc)
+ {
+   int ret;
++  struct w32_output *output = FRAME_OUTPUT_DATA (f);
+ 
+   /* Avoid releasing the double-buffered DC here, since it'll be
+      released upon the next buffer flip instead.  */
+-  if (hdc != FRAME_OUTPUT_DATA (f)->paint_dc)
++  if (hdc != output->paint_dc)
+     {
+       deselect_palette (f, hdc);
+       ret = ReleaseDC (f->output_data.w32->window_desc, hdc);
+@@ -271,7 +361,7 @@ release_frame_dc (struct frame *f, HDC hdc)
+ static int nQueue = 0;
+ 
+ BOOL
+-get_next_msg (W32Msg * lpmsg, BOOL bWait)
++get_next_msg (W32Msg *lpmsg, BOOL bWait)
+ {
+   BOOL bRet = FALSE;
+ 
+@@ -291,7 +381,7 @@ get_next_msg (W32Msg * lpmsg, BOOL bWait)
+       memcpy (lpmsg, &lpHead->w32msg, sizeof (W32Msg));
+ 
+       {
+-	int_msg * lpCur = lpHead;
++	int_msg *lpCur = lpHead;
+ 
+ 	lpHead = lpHead->lpNext;
+ 
+@@ -301,45 +391,45 @@ get_next_msg (W32Msg * lpmsg, BOOL bWait)
+       nQueue--;
+       /* Consolidate WM_PAINT messages to optimize redrawing.  */
+       if (lpmsg->msg.message == WM_PAINT && nQueue)
+-        {
+-          int_msg * lpCur = lpHead;
+-          int_msg * lpPrev = NULL;
+-          int_msg * lpNext = NULL;
+-
+-          while (lpCur && nQueue)
+-            {
+-              lpNext = lpCur->lpNext;
+-              if (lpCur->w32msg.msg.message == WM_PAINT)
+-                {
+-                  /* Remove this message from the queue.  */
+-                  if (lpPrev)
+-                    lpPrev->lpNext = lpNext;
+-                  else
+-                    lpHead = lpNext;
+-
+-                  if (lpCur == lpTail)
+-                    lpTail = lpPrev;
+-
+-                  /* Adjust clip rectangle to cover both.  */
+-                  if (!UnionRect (&(lpmsg->rect), &(lpmsg->rect),
+-                                  &(lpCur->w32msg.rect)))
+-                    {
+-                      SetRectEmpty (&(lpmsg->rect));
+-                    }
+-
+-                  myfree (lpCur);
+-
+-                  nQueue--;
+-
+-                  lpCur = lpNext;
+-                }
+-              else
+-                {
+-                  lpPrev = lpCur;
+-                  lpCur = lpNext;
+-                }
+-            }
+-        }
++	{
++	  int_msg *lpCur = lpHead;
++	  int_msg *lpPrev = NULL;
++	  int_msg *lpNext = NULL;
++
++	  while (lpCur && nQueue)
++	    {
++	      lpNext = lpCur->lpNext;
++	      if (lpCur->w32msg.msg.message == WM_PAINT)
++		{
++		  /* Remove this message from the queue.  */
++		  if (lpPrev)
++		    lpPrev->lpNext = lpNext;
++		  else
++		    lpHead = lpNext;
++
++		  if (lpCur == lpTail)
++		    lpTail = lpPrev;
++
++		  /* Adjust clip rectangle to cover both.  */
++		  if (!UnionRect (&(lpmsg->rect), &(lpmsg->rect),
++				  &(lpCur->w32msg.rect)))
++		    {
++		      SetRectEmpty (&(lpmsg->rect));
++		    }
++
++		  myfree (lpCur);
++
++		  nQueue--;
++
++		  lpCur = lpNext;
++		}
++	      else
++		{
++		  lpPrev = lpCur;
++		  lpCur = lpNext;
++		}
++	    }
++	}
+ 
+       bRet = TRUE;
+     }
+@@ -352,7 +442,7 @@ get_next_msg (W32Msg * lpmsg, BOOL bWait)
+   return (bRet);
+ }
+ 
+-extern char * w32_strerror (int error_no);
++extern char *w32_strerror (int error_no);
+ 
+ /* Tell the main thread that we have input available; if the main
+    thread is blocked in select(), we wake it up here.  */
+@@ -362,16 +452,17 @@ notify_msg_ready (void)
+   SetEvent (input_available);
+ 
+ #ifdef CYGWIN
+-  /* Wakes up the main thread, which is blocked select()ing for /dev/windows,
+-     among other files.  */
+-  (void) PostThreadMessage (dwMainThreadId, WM_EMACS_INPUT_READY, 0, 0);
++  /* Wakes up the main thread, which is blocked select()ing for
++     /dev/windows, among other files.  */
++  (void) PostThreadMessage (dwMainThreadId, WM_EMACS_INPUT_READY, 0,
++			    0);
+ #endif /* CYGWIN */
+ }
+ 
+ BOOL
+-post_msg (W32Msg * lpmsg)
++post_msg (W32Msg *lpmsg)
+ {
+-  int_msg * lpNew = (int_msg *) myalloc (sizeof (int_msg));
++  int_msg *lpNew = (int_msg *) myalloc (sizeof (int_msg));
+ 
+   if (!lpNew)
+     return (FALSE);
+@@ -400,7 +491,7 @@ post_msg (W32Msg * lpmsg)
+ BOOL
+ prepend_msg (W32Msg *lpmsg)
+ {
+-  int_msg * lpNew = (int_msg *) myalloc (sizeof (int_msg));
++  int_msg *lpNew = (int_msg *) myalloc (sizeof (int_msg));
+ 
+   if (!lpNew)
+     return (FALSE);
+-- 
+2.52.0.windows.1
+

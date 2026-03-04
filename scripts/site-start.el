@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 (let* ((emacs-libexec-path (car (last exec-path)))
        (emacs-libexec-ndx (string-match "libexec" emacs-libexec-path))
        (emacs-root (substring emacs-libexec-path 0 emacs-libexec-ndx))

@@ -31,7 +31,7 @@ index 000000000..e8e074474
 +    runs-on: ubuntu-latest
 +    env:
 +      upstream_repo: emacs-mirror/emacs
-+      upstream_branch: master feature/igc
++      upstream_branch: master feature/igc3
 +    steps:
 +      - name: Clone
 +        run: |

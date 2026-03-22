@@ -1,0 +1,44 @@
+From 97935c5fb9f75668cb30253eefb6b05a8457a92b Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Mon, 16 Mar 2026 11:40:15 -0700
+Subject: [PATCH] Fix IGC header bitfield layout on MinGW
+
+---
+ src/igc-types.h | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/src/igc-types.h b/src/igc-types.h
+index 681322388e..597d605854 100644
+--- a/src/igc-types.h
++++ b/src/igc-types.h
+@@ -94,19 +94,19 @@ static_assert (IGC_OBJ_NUM_TYPES - 1 < (1 << IGC_HEADER_TYPE_BITS));
+ #ifndef WORDS_BIGENDIAN
+   struct
+   {
+-    enum igc_tag tag : IGC_HEADER_TAG_BITS;
+-    enum igc_obj_type obj_type : IGC_HEADER_TYPE_BITS;
+-    size_t hash : IGC_HEADER_HASH_BITS;
+-    size_t nwords : IGC_HEADER_NWORDS_BITS;
++    uint64_t tag : IGC_HEADER_TAG_BITS;
++    uint64_t obj_type : IGC_HEADER_TYPE_BITS;
++    uint64_t hash : IGC_HEADER_HASH_BITS;
++    uint64_t nwords : IGC_HEADER_NWORDS_BITS;
+   } s;
+ #endif
+ #ifdef WORDS_BIGENDIAN
+   struct
+   {
+-    size_t nwords : IGC_HEADER_NWORDS_BITS;
+-    size_t hash : IGC_HEADER_HASH_BITS;
+-    enum igc_obj_type obj_type : IGC_HEADER_TYPE_BITS;
+-    enum igc_tag tag : IGC_HEADER_TAG_BITS;
++    uint64_t nwords : IGC_HEADER_NWORDS_BITS;
++    uint64_t hash : IGC_HEADER_HASH_BITS;
++    uint64_t obj_type : IGC_HEADER_TYPE_BITS;
++    uint64_t tag : IGC_HEADER_TAG_BITS;
+   } s;
+ #endif
+   uint64_t v;
+-- 
+2.52.0.windows.1
+

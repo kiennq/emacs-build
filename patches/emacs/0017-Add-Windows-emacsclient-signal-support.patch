@@ -1,0 +1,656 @@
+From 2c70945bb79ef14d65cd811fb51c2542c3faaa1e Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 22 Mar 2026 12:24:08 -0700
+Subject: [PATCH] Add Windows emacsclient signal support
+
+* lib-src/emacsclient.c (--pid, --signal, get_server_pid):
+Add Windows signal option parsing and PID lookup.
+(w32_send_signal_or_die): Send signals via named events.
+* src/keyboard.c (process_pending_signals): Drain pending
+Windows user signals.
+(add_user_signal, register_user_signal): Split Windows signal
+registration from CRT handler setup.
+(process_w32_user_signal_events): Deliver queued Windows user
+signals.
+* src/keyboard.h (register_user_signal): Declare helper.
+(process_w32_user_signal_events): Declare helper.
+* src/sysdep.c (init_signals): Register Windows internal user
+signals.
+* src/w32term.h (w32_get_next_pending_user_signal): Declare
+Windows signal queue accessor.
+* src/w32xfns.c (init_w32_user_signal_events): Create named
+signal events and worker thread.
+(delete_w32_user_signal_events): Tear down signal worker state.
+(w32_get_next_pending_user_signal): Drain queued signals.
+(notify_msg_ready): Wake the main thread on Windows.
+(drain_message_queue): Treat WM_EMACS_INPUT_READY as input.
+* test/lisp/server-tests.el
+(server-tests/emacsclient/signal-by-pid): Add Windows signal
+regression test.
+---
+ lib-src/emacsclient.c     | 159 +++++++++++++++++++++++++++++++++++-
+ src/keyboard.c            |  46 ++++++++++-
+ src/keyboard.h            |   2 +
+ src/sysdep.c              |   5 +-
+ src/w32term.h             |   1 +
+ src/w32xfns.c             | 164 +++++++++++++++++++++++++++++++++++++-
+ test/lisp/server-tests.el |  28 +++++++
+ 7 files changed, 396 insertions(+), 9 deletions(-)
+
+diff --git a/lib-src/emacsclient.c b/lib-src/emacsclient.c
+index 4f3215ea6b..3571eefc5c 100644
+--- a/lib-src/emacsclient.c
++++ b/lib-src/emacsclient.c
+@@ -28,7 +28,6 @@ Copyright (C) 1986-2026 Free Software Foundation, Inc.
+ 
+ # include <malloc.h>
+ # include <windows.h>
+-# include <commctrl.h>
+ # include <io.h>
+ # include <winsock2.h>
+ 
+@@ -41,6 +40,8 @@ Copyright (C) 1986-2026 Free Software Foundation, Inc.
+ 
+ # undef signal
+ 
++VOID WINAPI InitCommonControls (void);
++
+ #else /* !WINDOWSNT */
+ 
+ # ifdef HAVE_NTGUI
+@@ -155,6 +156,14 @@ #define DEFAULT_TIMEOUT (30)
+ /* If nonzero, PID of the Emacs server process.  */
+ static pid_t emacs_pid;
+ 
++#ifdef WINDOWSNT
++/* If nonzero, send this Windows signal and exit.  */
++static int requested_signal;
++
++/* True if --pid was provided explicitly.  */
++static bool signal_pid_given;
++#endif
++
+ /* If non-NULL, a string that should form a frame parameter alist to
+    be used for the new frame.  */
+ static char const *frame_parameters;
+@@ -186,6 +195,10 @@ #define DEFAULT_TIMEOUT (30)
+   { "parent-id", required_argument, NULL, 'p' },
+   { "timeout",	required_argument, NULL, 'w' },
+   { "tramp",	required_argument, NULL, 'T' },
++#ifdef WINDOWSNT
++  { "pid", required_argument, NULL, 'P' },
++  { "signal", required_argument, NULL, 'S' },
++#endif
+   { 0, 0, 0, 0 }
+ };
+ 
+@@ -196,7 +209,11 @@ #define DEFAULT_TIMEOUT (30)
+ #ifdef SOCKETS_IN_FILE_SYSTEM
+   "s:"
+ #endif
+-  "f:d:T:";
++  "f:d:T:"
++#ifdef WINDOWSNT
++  "P:S:"
++#endif
++  ;
+ 
+ 
+ /* Like malloc but get fatal error if memory is exhausted.  */
+@@ -549,6 +566,27 @@ decode_options (int argc, char **argv)
+ 	    }
+ 	  break;
+ 
++#ifdef WINDOWSNT
++	case 'P':
++	  emacs_pid = strtoumax (optarg, &endptr, 10);
++	  if (emacs_pid <= 0 || *endptr)
++	    {
++	      fprintf (stderr, "Invalid pid: \"%s\"\n", optarg);
++	      exit (EXIT_FAILURE);
++	    }
++	  signal_pid_given = true;
++	  break;
++
++	case 'S':
++	  requested_signal = strtoimax (optarg, &endptr, 10);
++	  if (requested_signal <= 0 || *endptr)
++	    {
++	      fprintf (stderr, "Invalid signal: \"%s\"\n", optarg);
++	      exit (EXIT_FAILURE);
++	    }
++	  break;
++#endif
++
+ 	case 'e':
+ 	  eval = true;
+ 	  break;
+@@ -709,6 +747,10 @@ print_help_and_exit (void)
+ 			Visit the file in the given display\n\
+ ", "\
+ --parent-id=ID          Open in parent window ID, via XEmbed\n"
++#ifdef WINDOWSNT
++"--pid=PID                Send a Windows signal to Emacs process PID\n\
++--signal=SIGNAL          Send Windows signal number SIGNAL to Emacs\n"
++#endif
+ #ifdef SOCKETS_IN_FILE_SYSTEM
+ "-s SOCKET, --socket-name=SOCKET\n\
+ 			Set filename of the UNIX socket for communication\n"
+@@ -1034,6 +1076,114 @@ get_server_config (const char *config_file, struct sockaddr_in *server,
+   return true;
+ }
+ 
++#ifdef WINDOWSNT
++static bool
++get_server_pid (const char *config_file, pid_t *pid)
++{
++  char line[64];
++  FILE *config;
++
++  if (IS_ABSOLUTE_FILE_NAME (config_file))
++    config = fopen (config_file, "rb");
++  else
++    {
++      char const *xdg = egetenv ("XDG_CONFIG_HOME");
++      config = open_config (egetenv ("HOME"), xdg, config_file);
++      if (!config)
++	config = open_config (egetenv ("APPDATA"), xdg, config_file);
++    }
++
++  if (!config)
++    return false;
++
++  if (fgets (line, sizeof line, config))
++    {
++      char *pid_start = strchr (line, ' ');
++      if (pid_start)
++	{
++	  char *end;
++	  uintmax_t value;
++
++	  errno = 0;
++	  value = strtoumax (pid_start + 1, &end, 10);
++	  if (!errno && pid_start + 1 < end && value > 0)
++	    {
++	      *pid = value;
++	      fclose (config);
++	      return true;
++	    }
++	}
++    }
++
++  fclose (config);
++  return false;
++}
++
++static _Noreturn void
++w32_send_signal_or_die (void)
++{
++  char name[64];
++  HANDLE event;
++
++  switch (requested_signal)
++    {
++    case 1001:
++    case 1002:
++      break;
++
++    default:
++      message (true, "%s: unsupported Windows signal %d\n",
++	       progname, requested_signal);
++      exit (EXIT_FAILURE);
++    }
++
++  if (!signal_pid_given)
++    {
++      const char *local_server_file = server_file;
++
++      if (!local_server_file)
++	local_server_file = egetenv ("EMACS_SERVER_FILE");
++      if (!local_server_file)
++	{
++	  message (true,
++		   "%s: use --pid=PID or --server-file=SERVER with --signal\n",
++		   progname);
++	  exit (EXIT_FAILURE);
++	}
++      if (!get_server_pid (local_server_file, &emacs_pid))
++	{
++	  message (true,
++		   "%s: cannot determine Emacs PID; use --pid=PID\n",
++		   progname);
++	  exit (EXIT_FAILURE);
++	}
++    }
++
++  snprintf (name, sizeof name, "Local\\Emacs-%lu-%d",
++	    (unsigned long) emacs_pid, requested_signal);
++  event = OpenEvent (EVENT_MODIFY_STATE, FALSE, name);
++  if (!event)
++    {
++      message (true,
++	       "%s: cannot open Windows signal event for pid %lu signal %d\n",
++	       progname, (unsigned long) emacs_pid, requested_signal);
++      exit (EXIT_FAILURE);
++    }
++
++  if (!SetEvent (event))
++    {
++      CloseHandle (event);
++      message (true,
++	       "%s: cannot signal Emacs pid %lu with signal %d\n",
++	       progname, (unsigned long) emacs_pid, requested_signal);
++      exit (EXIT_FAILURE);
++    }
++
++  CloseHandle (event);
++  exit (EXIT_SUCCESS);
++}
++#endif
++
+ /* Like socket (DOMAIN, TYPE, PROTOCOL), except arrange for the
+    resulting file descriptor to be close-on-exec.  */
+ 
+@@ -1995,6 +2145,11 @@ main (int argc, char **argv)
+   /* Process options.  */
+   decode_options (argc, argv);
+ 
++#ifdef WINDOWSNT
++  if (requested_signal)
++    w32_send_signal_or_die ();
++#endif
++
+   if (! (optind < argc || eval || create_frame))
+     {
+       message (true, ("%s: file name or argument required\n"
+diff --git a/src/keyboard.c b/src/keyboard.c
+index c63440059e..c7232138e0 100644
+--- a/src/keyboard.c
++++ b/src/keyboard.c
+@@ -418,9 +418,14 @@ #define READABLE_EVENTS_IGNORE_SQUEEZABLES	(1 << 2)
+ static void deliver_user_signal (int);
+ static char *find_user_signal_name (int);
+ static void store_user_signal_events (void);
++static void add_user_signal_1 (int, const char *);
+ static bool is_ignored_event (union buffered_input_event *);
+ static void do_async_work (void);
+ 
++#ifdef WINDOWSNT
++extern int w32_get_next_pending_user_signal (void);
++#endif
++
+ /* Advance or retreat a buffered input event pointer.  */
+ 
+ union buffered_input_event *
+@@ -8388,6 +8393,9 @@ handle_async_input (void)
+ process_pending_signals (void)
+ {
+   pending_signals = false;
++#ifdef WINDOWSNT
++  process_w32_user_signal_events ();
++#endif
+   handle_async_input ();
+   do_pending_atimers ();
+   do_async_work ();
+@@ -8488,6 +8496,22 @@ deliver_input_available_signal (int sig)
+ add_user_signal (int sig, const char *name)
+ {
+   struct sigaction action;
++
++  add_user_signal_1 (sig, name);
++
++  emacs_sigaction_init (&action, deliver_user_signal);
++  sigaction (sig, &action, 0);
++}
++
++void
++register_user_signal (int sig, const char *name)
++{
++  add_user_signal_1 (sig, name);
++}
++
++static void
++add_user_signal_1 (int sig, const char *name)
++{
+   struct user_signal_info *p;
+ 
+   for (p = user_signals; p; p = p->next)
+@@ -8501,9 +8525,6 @@ add_user_signal (int sig, const char *name)
+   p->npending = 0;
+   p->next = user_signals;
+   user_signals = p;
+-
+-  emacs_sigaction_init (&action, deliver_user_signal);
+-  sigaction (sig, &action, 0);
+ }
+ 
+ #ifdef HAVE_MPS
+@@ -8580,6 +8601,24 @@ deliver_user_signal (int sig)
+   deliver_process_signal (sig, handle_user_signal);
+ }
+ 
++void
++process_w32_user_signal_events (void)
++{
++#ifdef WINDOWSNT
++  int sig;
++  bool got_signal = false;
++
++  while ((sig = w32_get_next_pending_user_signal ()) != 0)
++    {
++      handle_user_signal (sig);
++      got_signal = true;
++    }
++
++  if (got_signal)
++    store_user_signal_events ();
++#endif
++}
++
+ static char *
+ find_user_signal_name (int sig)
+ {
+@@ -14606,6 +14645,7 @@ syms_of_keyboard (void)
+   DEFSYM (Qsuspend_hook, "suspend-hook");
+   DEFSYM (Qsuspend_resume_hook, "suspend-resume-hook");
+   DEFSYM (Qcommand_error_default_function, "command-error-default-function");
++  DEFSYM (Qsigusr1, "sigusr1");
+   DEFSYM (Qsigusr2, "sigusr2");
+   DEFSYM (Qascii_character, "ascii-character");
+ }
+diff --git a/src/keyboard.h b/src/keyboard.h
+index 3f1560d5a1..75e3808d0c 100644
+--- a/src/keyboard.h
++++ b/src/keyboard.h
+@@ -516,6 +516,8 @@ kbd_buffer_store_event_hold (struct input_event *event,
+ extern Lisp_Object menu_item_eval_property (Lisp_Object);
+ extern bool kbd_buffer_events_waiting (void);
+ extern void add_user_signal (int, const char *);
++extern void register_user_signal (int, const char *);
++extern void process_w32_user_signal_events (void);
+ 
+ extern int tty_read_avail_input (struct terminal *, struct input_event *);
+ extern struct timespec timer_check (void);
+diff --git a/src/sysdep.c b/src/sysdep.c
+index 8895655566..3801fd899b 100644
+--- a/src/sysdep.c
++++ b/src/sysdep.c
+@@ -2077,7 +2077,10 @@ init_signals (void)
+ 
+   /* SIGUSR1 and SIGUSR2 are used internally by the android_select
+      function.  */
+-#if !defined HAVE_ANDROID
++#if defined WINDOWSNT
++  register_user_signal (1001, "sigusr1");
++  register_user_signal (1002, "sigusr2");
++#elif !defined HAVE_ANDROID
+ #ifdef SIGUSR1
+   add_user_signal (SIGUSR1, "sigusr1");
+ #endif
+diff --git a/src/w32term.h b/src/w32term.h
+index f28cd9a74b..cba1a13c52 100644
+--- a/src/w32term.h
++++ b/src/w32term.h
+@@ -768,6 +768,7 @@ #define leave_crit() LeaveCriticalSection (&critsect)
+ extern int release_frame_dc (struct frame * f, HDC hDC);
+ 
+ extern int drain_message_queue (void);
++extern int w32_get_next_pending_user_signal (void);
+ 
+ extern BOOL get_next_msg (W32Msg *, BOOL);
+ extern BOOL post_msg (W32Msg *);
+diff --git a/src/w32xfns.c b/src/w32xfns.c
+index f920e40734..e5365d6d3a 100644
+--- a/src/w32xfns.c
++++ b/src/w32xfns.c
+@@ -54,6 +54,152 @@ #define myfree(lp) GlobalFreePtr (lp)
+ extern HANDLE interrupt_handle;
+ HANDLE interrupt_handle = NULL;
+ 
++#ifdef WINDOWSNT
++struct w32_user_signal_event
++{
++  int sig;
++  HANDLE event;
++  volatile LONG pending;
++};
++
++static struct w32_user_signal_event w32_user_signal_events[] =
++  {
++    { 1001, NULL, 0 },
++    { 1002, NULL, 0 },
++  };
++
++static HANDLE w32_user_signal_thread;
++static HANDLE w32_user_signal_stop;
++
++static DWORD WINAPI w32_user_signal_thread_proc (LPVOID);
++static void notify_msg_ready (void);
++
++static void
++init_w32_user_signal_events (void)
++{
++  char name[64];
++  DWORD pid = GetCurrentProcessId ();
++
++  w32_user_signal_stop = CreateEvent (NULL, TRUE, FALSE, NULL);
++  if (!w32_user_signal_stop)
++    return;
++
++  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++    {
++      snprintf (name, sizeof name, "Local\\Emacs-%lu-%d",
++                (unsigned long) pid, w32_user_signal_events[i].sig);
++      w32_user_signal_events[i].event = CreateEvent (NULL, FALSE, FALSE,
++                                                     name);
++      if (!w32_user_signal_events[i].event)
++        {
++          for (int j = 0; j < i; ++j)
++            {
++              CloseHandle (w32_user_signal_events[j].event);
++              w32_user_signal_events[j].event = NULL;
++            }
++          CloseHandle (w32_user_signal_stop);
++          w32_user_signal_stop = NULL;
++          return;
++        }
++    }
++
++  w32_user_signal_thread = CreateThread (NULL, 0, w32_user_signal_thread_proc,
++                                         NULL, 0, NULL);
++  if (!w32_user_signal_thread)
++    {
++      for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++        if (w32_user_signal_events[i].event)
++          {
++            CloseHandle (w32_user_signal_events[i].event);
++            w32_user_signal_events[i].event = NULL;
++          }
++      CloseHandle (w32_user_signal_stop);
++      w32_user_signal_stop = NULL;
++    }
++}
++
++static void
++delete_w32_user_signal_events (void)
++{
++  if (w32_user_signal_stop)
++    SetEvent (w32_user_signal_stop);
++
++  if (w32_user_signal_thread)
++    {
++      WaitForSingleObject (w32_user_signal_thread, INFINITE);
++      CloseHandle (w32_user_signal_thread);
++      w32_user_signal_thread = NULL;
++    }
++
++  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++    if (w32_user_signal_events[i].event)
++      {
++        CloseHandle (w32_user_signal_events[i].event);
++        w32_user_signal_events[i].event = NULL;
++        w32_user_signal_events[i].pending = 0;
++      }
++
++  if (w32_user_signal_stop)
++    {
++      CloseHandle (w32_user_signal_stop);
++      w32_user_signal_stop = NULL;
++    }
++}
++
++static DWORD WINAPI
++w32_user_signal_thread_proc (LPVOID arg)
++{
++  HANDLE waits[1 + ARRAYELTS (w32_user_signal_events)];
++  (void) arg;
++
++  waits[0] = w32_user_signal_stop;
++  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++    waits[i + 1] = w32_user_signal_events[i].event;
++
++  while (true)
++    {
++      DWORD rc = WaitForMultipleObjects (ARRAYELTS (waits), waits,
++                                         FALSE, INFINITE);
++
++      if (rc == WAIT_OBJECT_0)
++        return 0;
++
++      if (WAIT_OBJECT_0 < rc
++          && rc < WAIT_OBJECT_0 + ARRAYELTS (waits))
++        {
++          int i = rc - WAIT_OBJECT_0 - 1;
++
++          InterlockedIncrement (&w32_user_signal_events[i].pending);
++          pending_signals = true;
++          signal_quit ();
++          notify_msg_ready ();
++        }
++    }
++}
++
++int
++w32_get_next_pending_user_signal (void)
++{
++  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++    {
++      LONG pending = InterlockedCompareExchange (&w32_user_signal_events[i].pending,
++                                                 0, 0);
++
++      while (pending > 0)
++        {
++          LONG next = pending - 1;
++          LONG prev = InterlockedCompareExchange (&w32_user_signal_events[i].pending,
++                                                  next, pending);
++          if (prev == pending)
++            return w32_user_signal_events[i].sig;
++          pending = prev;
++        }
++    }
++
++  return 0;
++}
++#endif
++
+ void
+ init_crit (void)
+ {
+@@ -89,6 +235,10 @@ init_crit (void)
+      that would the right response).  Note that we use PulseEvent to
+      signal this event, so that it never remains signaled.  */
+   interrupt_handle = CreateEvent (NULL, TRUE, FALSE, NULL);
++
++#ifdef WINDOWSNT
++  init_w32_user_signal_events ();
++#endif
+ }
+ 
+ void
+@@ -107,6 +257,10 @@ delete_crit (void)
+       interrupt_handle = NULL;
+     }
+ 
++#ifdef WINDOWSNT
++  delete_w32_user_signal_events ();
++#endif
++
+ #if HAVE_W32NOTIFY
+   if (notifications_set_head)
+     {
+@@ -361,11 +515,11 @@ notify_msg_ready (void)
+ {
+   SetEvent (input_available);
+ 
+-#ifdef CYGWIN
++#ifdef WINDOWSNT
+   /* Wakes up the main thread, which is blocked select()ing for /dev/windows,
+      among other files.  */
+   (void) PostThreadMessage (dwMainThreadId, WM_EMACS_INPUT_READY, 0, 0);
+-#endif /* CYGWIN */
++#endif /* WINDOWSNT */
+ }
+ 
+ BOOL
+@@ -419,7 +573,8 @@ prepend_msg (W32Msg *lpmsg)
+ }
+ 
+ /* Process all messages in the current thread's queue.  Value is 1 if
+-   one of these messages was WM_EMACS_FILENOTIFY, zero otherwise.  */
++   one of these messages was WM_EMACS_FILENOTIFY or WM_EMACS_INPUT_READY,
++   zero otherwise.  */
+ int
+ drain_message_queue (void)
+ {
+@@ -430,6 +585,9 @@ drain_message_queue (void)
+     {
+       switch (msg.message)
+ 	{
++	case WM_EMACS_INPUT_READY:
++	  retval = 1;
++	  break;
+ #ifdef WINDOWSNT
+ 	case WM_WTSSESSION_CHANGE:
+ 	  if (msg.wParam == WTS_SESSION_LOCK)
+diff --git a/test/lisp/server-tests.el b/test/lisp/server-tests.el
+index a96dc85074..8c9e3a306c 100644
+--- a/test/lisp/server-tests.el
++++ b/test/lisp/server-tests.el
+@@ -187,6 +187,34 @@ server-tests/emacsclient/eval
+           'exit
+         (should (= server-tests/variable value))))))
+ 
++(ert-deftest server-tests/emacsclient/signal-by-pid ()
++  "Test that \"emacsclient --signal\" delivers a user signal by PID."
++  (skip-unless (eq system-type 'windows-nt))
++  (cl-letf (((symbol-function 'server-ensure-safe-dir) #'ignore))
++    (server-tests/with-server
++      (let ((signal-received nil)
++            (old-binding (lookup-key special-event-map [sigusr1]))
++            (start (current-time)))
++        (unwind-protect
++            (progn
++              (define-key special-event-map [sigusr1]
++                          (lambda ()
++                            (interactive)
++                            (setq signal-received t)))
++              (server-tests/with-client emacsclient
++                  (list (format "--pid=%d" (emacs-pid))
++                        "--signal=1001")
++                  'exit
++                (while (not signal-received)
++                  (when (> (float-time (time-since start))
++                           server-tests/max-wait-time)
++                    (ert-fail (format "timed out waiting for %S to be non-nil"
++                                      'signal-received)))
++                  ;; `read-event' drives `special-event-map' handling,
++                  ;; which is where user signals are delivered.
++                  (read-event nil nil 0.1))))
++          (define-key special-event-map [sigusr1] old-binding))))))
++
+ (ert-deftest server-tests/server-force-stop/keeps-frames ()
+   "Ensure that `server-force-stop' doesn't delete frames.  See bug#58877.
+ Note: since that bug is about a behavior when killing Emacs, this
+-- 
+2.53.0.windows.2
+

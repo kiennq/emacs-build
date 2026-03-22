@@ -1,0 +1,125 @@
+From f9faa554d7d77ace4b400914948d0108f0fab73f Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 22 Mar 2026 15:18:42 -0700
+Subject: [PATCH] Fix igc_xzalloc_ambig callsites after igc3 merge
+
+After merging feature/igc3, several HAVE_MPS callsites still
+
+used the old one-argument form.  Switch them to
+
+IGC_XZALLOC_AMBIG so __func__ is supplied automatically and
+
+the Windows build compiles again.
+
+* src/androidterm.c (android_term_init): Use
+
+IGC_XZALLOC_AMBIG.
+
+* src/gnutls.c (emacs_gnutls_handshake): Likewise.
+
+* src/pgtkfns.c (pgtk_create_tip_frame): Likewise.
+
+* src/pgtkterm.c (pgtk_link_touch_point): Likewise.
+
+* src/sfntfont.c (sfnt_enum_font_1, sfntfont_open): Likewise.
+
+* src/xfns.c (x_window): Likewise.
+---
+ src/androidterm.c | 2 +-
+ src/gnutls.c      | 2 +-
+ src/pgtkfns.c     | 2 +-
+ src/pgtkterm.c    | 2 +-
+ src/sfntfont.c    | 4 ++--
+ src/xfns.c        | 2 +-
+ 6 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/src/androidterm.c b/src/androidterm.c
+index 86425cee0d..a0d9235039 100644
+--- a/src/androidterm.c
++++ b/src/androidterm.c
+@@ -6787,7 +6787,7 @@ android_term_init (void)
+   Lisp_Object color_file;
+ 
+ #ifdef HAVE_MPS
+-  dpyinfo = igc_xzalloc_ambig (sizeof *dpyinfo);
++  dpyinfo = IGC_XZALLOC_AMBIG (sizeof *dpyinfo);
+ #else
+   dpyinfo = xzalloc (sizeof *dpyinfo);
+ #endif
+diff --git a/src/gnutls.c b/src/gnutls.c
+index 6e56234f95..d1213a889e 100644
+--- a/src/gnutls.c
++++ b/src/gnutls.c
+@@ -709,7 +709,7 @@ emacs_gnutls_handshake (struct Lisp_Process *proc)
+ #ifdef HAVE_MPS
+       /* FIXME/igc: use exact tracing here */
+       if (!proc->gnutls_pproc)
+-	proc->gnutls_pproc = igc_xzalloc_ambig (sizeof *proc->gnutls_pproc);
++	proc->gnutls_pproc = IGC_XZALLOC_AMBIG (sizeof *proc->gnutls_pproc);
+ #else
+       if (!proc->gnutls_pproc)
+ 	proc->gnutls_pproc = xmalloc (sizeof *proc->gnutls_pproc);
+diff --git a/src/pgtkfns.c b/src/pgtkfns.c
+index bd9b0f63fd..257e0a29e8 100644
+--- a/src/pgtkfns.c
++++ b/src/pgtkfns.c
+@@ -2636,7 +2636,7 @@ pgtk_create_tip_frame (struct pgtk_display_info *dpyinfo, Lisp_Object parms, str
+      counts etc.  */
+   f->output_method = output_pgtk;
+ #ifdef HAVE_MPS
+-  f->output_data.pgtk = igc_xzalloc_ambig (sizeof *f->output_data.pgtk);
++  f->output_data.pgtk = IGC_XZALLOC_AMBIG (sizeof *f->output_data.pgtk);
+ #else
+   f->output_data.pgtk = xzalloc (sizeof *f->output_data.pgtk);
+ #endif
+diff --git a/src/pgtkterm.c b/src/pgtkterm.c
+index e73075f2a8..98e29ccf1d 100644
+--- a/src/pgtkterm.c
++++ b/src/pgtkterm.c
+@@ -6591,7 +6591,7 @@ pgtk_link_touch_point (struct pgtk_display_info *dpyinfo,
+     local_detail = 0;
+ 
+ #ifdef HAVE_MPS
+-  touchpoint = igc_xzalloc_ambig (sizeof *touchpoint);
++  touchpoint = IGC_XZALLOC_AMBIG (sizeof *touchpoint);
+ #else
+   touchpoint = xmalloc (sizeof *touchpoint);
+ #endif
+diff --git a/src/sfntfont.c b/src/sfntfont.c
+index f130fa9053..5bbfe9c3e9 100644
+--- a/src/sfntfont.c
++++ b/src/sfntfont.c
+@@ -992,7 +992,7 @@ sfnt_enum_font_1 (int fd, const char *file,
+ 
+   /* Create the font desc and copy in the file name.  */
+ #ifdef HAVE_MPS
+-  desc = igc_xzalloc_ambig (sizeof *desc + strlen (file) + 1);
++  desc = IGC_XZALLOC_AMBIG (sizeof *desc + strlen (file) + 1);
+ #else
+   desc = xzalloc (sizeof *desc + strlen (file) + 1);
+ #endif
+@@ -3235,7 +3235,7 @@ sfntfont_open (struct frame *f, Lisp_Object font_entity,
+      font implementation utilizes internal pointers
+      (font_info->outline_cache.next, for example). When the font object
+      moves, those pointers become invalid and we infloop. */
+-  struct sfnt_font_info **leak = igc_xzalloc_ambig (sizeof *leak);
++  struct sfnt_font_info **leak = IGC_XZALLOC_AMBIG (sizeof *leak);
+   *leak = font_info;
+ #endif
+ 
+diff --git a/src/xfns.c b/src/xfns.c
+index 6de3f42b2a..7c690dac1e 100644
+--- a/src/xfns.c
++++ b/src/xfns.c
+@@ -4225,7 +4225,7 @@ x_window (struct frame *f, long window_prompting)
+ 
+   struct frame **framep;
+ #ifdef HAVE_MPS
+-  framep = igc_xzalloc_ambig (sizeof *framep);
++  framep = IGC_XZALLOC_AMBIG (sizeof *framep);
+ #else
+   framep = xmalloc (sizeof *framep);
+ #endif
+-- 
+2.53.0.windows.2
+

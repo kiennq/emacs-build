@@ -1,0 +1,93 @@
+From 584e693dccfd14e34d909c6024a20403d8cc9cfe Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 19 Jun 2026 01:17:08 -0700
+Subject: [PATCH] Fix JSON symset rooting under IGC
+
+* src/json.c (make_symset_table): Use xmalloc and root only
+the entries array under MPS.
+(free_symset_table): New function.
+(pop_symset, cleanup_symset_tables, symset_expand): Use it.
+---
+ src/json.c | 37 ++++++++++++++++---------------------
+ 1 file changed, 16 insertions(+), 21 deletions(-)
+
+diff --git a/src/json.c b/src/json.c
+index bdb3f6e5d91..fe1f73621ec 100644
+--- a/src/json.c
++++ b/src/json.c
+@@ -144,20 +144,27 @@ make_symset_table (int bits, struct symset_tbl *up)
+   int maxbits = min (SIZE_WIDTH - 2 - (word_size < 8 ? 2 : 3), 32);
+   if (bits > maxbits)
+     memory_full_up ();	/* Will never happen in practice.  */
+-#ifdef HAVE_MPS
+   struct symset_tbl *st
+-    = igc_xzalloc_ambig (sizeof *st + (sizeof *st->entries << bits),
+-			 __func__);
+-#else
+-  struct symset_tbl *st = xmalloc (sizeof *st + (sizeof *st->entries << bits));
+-#endif
++    = xmalloc (sizeof *st + (sizeof *st->entries << bits));
+   st->up = up;
+   ptrdiff_t size = symset_size (bits);
+   for (ptrdiff_t i = 0; i < size; i++)
+     st->entries[i] = Qunbound;
++#ifdef HAVE_MPS
++  igc_root_create_exact (st->entries, st->entries + size);
++#endif
+   return st;
+ }
+ 
++static void
++free_symset_table (struct symset_tbl *st)
++{
++#ifdef HAVE_MPS
++  igc_destroy_root_with_start (st->entries);
++#endif
++  xfree (st);
++}
++
+ /* Create a new symset to use for a new object.  */
+ static symset_t
+ push_symset (json_out_t *jo)
+@@ -173,11 +180,7 @@ push_symset (json_out_t *jo)
+ pop_symset (json_out_t *jo, symset_t *ss)
+ {
+   jo->ss_table = ss->table->up;
+-#ifdef HAVE_MPS
+-  igc_xfree (ss->table);
+-#else
+-  xfree (ss->table);
+-#endif
++  free_symset_table (ss->table);
+ }
+ 
+ /* Remove all heap-allocated symset tables, in case an error occurred.  */
+@@ -187,11 +190,7 @@ cleanup_symset_tables (struct symset_tbl *st)
+   while (st)
+     {
+       struct symset_tbl *up = st->up;
+-#ifdef HAVE_MPS
+-      igc_xfree (st);
+-#else
+-      xfree (st);
+-#endif
++      free_symset_table (st);
+       st = up;
+     }
+ }
+@@ -232,11 +231,7 @@ symset_expand (symset_t *ss)
+ 	  tbl->entries[j] = sym;
+ 	}
+     }
+-#ifdef HAVE_MPS
+-  igc_xfree (old_table);
+-#else
+-  xfree (old_table);
+-#endif
++  free_symset_table (old_table);
+ }
+ 
+ /* If sym is in ss, return false; otherwise add it and return true.
+-- 
+2.54.0.windows.1
+

@@ -1,14 +1,11 @@
-From 169324fd3d5447b519323019b2696abe1a78af0a Mon Sep 17 00:00:00 2001
+From 880c91d4a4e75040331d6270019424efbc296d30 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Fri, 5 Jul 2024 02:39:23 -0700
-Subject: [PATCH 10/12] clang fixes
+Subject: [PATCH 14/24] clang fixes
 
----
- nt/mingw-cfg.site | 4 ++++
- 1 file changed, 4 insertions(+)
 
 diff --git a/nt/mingw-cfg.site b/nt/mingw-cfg.site
-index 16b61de3b..9dc8132f0 100644
+index 7829a9878fe..0e8b87199a2 100644
 --- a/nt/mingw-cfg.site
 +++ b/nt/mingw-cfg.site
 @@ -29,6 +29,10 @@
@@ -23,5 +20,5 @@ index 16b61de3b..9dc8132f0 100644
  ac_cv_header_getopt_h=no
  
 -- 
-2.46.0.windows.1
+2.54.0.windows.1
 

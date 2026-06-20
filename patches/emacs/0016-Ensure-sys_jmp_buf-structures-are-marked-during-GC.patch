@@ -1,7 +1,7 @@
-From 530b096e0d21a94938a00a43f13e699ba98cb217 Mon Sep 17 00:00:00 2001
+From f1013b7788ad1858bc69d946dcaeeff98c8e68a7 Mon Sep 17 00:00:00 2001
 From: Pip Cet <pipcet@protonmail.com>
 Date: Wed, 21 May 2025 20:20:03 -0700
-Subject: [PATCH 12/12] Ensure sys_jmp_buf structures are marked during GC
+Subject: [PATCH 16/24] Ensure sys_jmp_buf structures are marked during GC
 
 It's possible for a GC-relevant reference to be stored in a
 callee-saved register only, and for setjmp to have moved this
@@ -10,15 +10,12 @@ mark all potential pointers in sys_jmp_buf.
 
 * src/thread.c (mark_one_thread): Mark thread->m_getcjmp and
 handler->jmp ambiguously.
----
- src/thread.c | 3 +++
- 1 file changed, 3 insertions(+)
 
 diff --git a/src/thread.c b/src/thread.c
-index 765da2141..28abf90ac 100644
+index 7c3bfbce17f..9de8b838961 100644
 --- a/src/thread.c
 +++ b/src/thread.c
-@@ -672,12 +672,15 @@ mark_one_thread (struct thread_state *thread)
+@@ -686,12 +686,15 @@ mark_one_thread (struct thread_state *thread)
    mark_specpdl (thread->m_specpdl, thread->m_specpdl_ptr);
  
    mark_c_stack (thread->m_stack_bottom, stack_top);
@@ -35,5 +32,5 @@ index 765da2141..28abf90ac 100644
  
    if (thread->m_current_buffer)
 -- 
-2.46.0.windows.1
+2.54.0.windows.1
 

@@ -1,15 +1,12 @@
-From 84ca2a8c2908cbf4b51bfd34aaba72d3b3c0195f Mon Sep 17 00:00:00 2001
+From ed9ce47309d8fa2b130d5cb2f664cf573008b9a6 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Wed, 21 May 2025 22:15:05 -0700
-Subject: [PATCH 04/12] w32-win: dont load dnd menu-bar scroll-bar
+Subject: [PATCH 09/24] w32-win: dont load dnd menu-bar scroll-bar
  unneccesarily
 
----
- lisp/term/w32-win.el | 12 +++++++-----
- 1 file changed, 7 insertions(+), 5 deletions(-)
 
 diff --git a/lisp/term/w32-win.el b/lisp/term/w32-win.el
-index a1959cd11..37f1332e4 100644
+index 385f488393d..2c0434c3f93 100644
 --- a/lisp/term/w32-win.el
 +++ b/lisp/term/w32-win.el
 @@ -71,10 +71,7 @@
@@ -61,5 +58,5 @@ index a1959cd11..37f1332e4 100644
    ;; Don't show the frame name; that's redundant.
    (setq-default mode-line-frame-identification "  ")
 -- 
-2.46.0.windows.1
+2.54.0.windows.1
 

@@ -1,14 +1,12 @@
-From 8e6616bb3ddcdde9964e75b2f62e0dde15233f7e Mon Sep 17 00:00:00 2001
+From b3ca0adaa74aaa7643d78c916bf43616dfa7e978 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Thu, 12 Feb 2026 10:54:31 -0800
-Subject: [PATCH] Cache collapsed minor modes keymap in mode-line rendering
+Subject: [PATCH 19/24] Cache collapsed minor modes keymap in mode-line
+ rendering
 
----
- lisp/bindings.el | 27 +++++++++++++++++++++++----
- 1 file changed, 23 insertions(+), 4 deletions(-)
 
 diff --git a/lisp/bindings.el b/lisp/bindings.el
-index c0c2cf109..4659092de 100644
+index b13dc0a705c..8731a1245a4 100644
 --- a/lisp/bindings.el
 +++ b/lisp/bindings.el
 @@ -514,6 +514,11 @@ mode-line--make-lighter-menu
@@ -53,5 +51,5 @@ index c0c2cf109..4659092de 100644
                              mouse-face mode-line-highlight
                              help-echo "Hidden minor modes\n\
 -- 
-2.51.1.windows.1
+2.54.0.windows.1
 

@@ -1,17 +1,39 @@
-From 7391ae9d48e792115a6feef40b0476084c4f314d Mon Sep 17 00:00:00 2001
+From 047b3b5219141d776381060b00b20bd0ad274023 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
-Date: Fri, 19 Jun 2026 01:17:08 -0700
-Subject: [PATCH] Fix JSON symset rooting under IGC
+Date: Fri, 19 Jun 2026 17:26:24 -0700
+Subject: [PATCH 03/24] Fix JSON handling under IGC
 
 * src/json.c (symset_t): Store duplicate-key entries in a Lisp
 vector.
 (make_symset_entries): New function.
 (make_symset_table): Keep only the raw cleanup link in C memory.
 (symset_expand, symset_add): Use vector accessors for entries.
----
- src/json.c | 83 ++++++++++++++++++++++--------------------------------
- 1 file changed, 34 insertions(+), 49 deletions(-)
+* src/igc.c (igc_xpalloc_raw, igc_xpalloc_lisp): Initialize
+the new item count from *nitems instead of the old heap item count.
+* test/src/json-tests.el (json-parse-string/large-object): New test.
 
+diff --git a/src/igc.c b/src/igc.c
+index bf13c76e9a8..539677ee111 100644
+--- a/src/igc.c
++++ b/src/igc.c
+@@ -4170,7 +4170,7 @@ igc_xpalloc_raw (void *pa, ptrdiff_t *nitems,
+ 		 const char *label)
+ {
+   ptrdiff_t nitems_old = pa ? *nitems : 0;
+-  ptrdiff_t nitems_new = nitems_old;
++  ptrdiff_t nitems_new = *nitems;
+   ptrdiff_t nbytes = xpalloc_nbytes (pa, &nitems_new, nitems_incr_min,
+ 				     nitems_max, sizeof (void *));
+   void **old = pa;
+@@ -4211,7 +4211,7 @@ igc_xpalloc_lisp (Lisp_Object *pa, ptrdiff_t *nitems,
+ 		  const char *label)
+ {
+   ptrdiff_t nitems_old = pa ? *nitems : 0;
+-  ptrdiff_t nitems_new = nitems_old;
++  ptrdiff_t nitems_new = *nitems;
+   ptrdiff_t nbytes = xpalloc_nbytes (pa, &nitems_new, nitems_incr_min,
+ 				     nitems_max, word_size);
+   Lisp_Object *old = pa;
 diff --git a/src/json.c b/src/json.c
 index bdb3f6e5d91..90dd495da17 100644
 --- a/src/json.c
@@ -190,6 +212,30 @@ index bdb3f6e5d91..90dd495da17 100644
  	{
  	  if (!first)
  	    json_out_byte (jo, ',');
+diff --git a/test/src/json-tests.el b/test/src/json-tests.el
+index ec079f020bd..57c3f45df18 100644
+--- a/test/src/json-tests.el
++++ b/test/src/json-tests.el
+@@ -196,6 +196,19 @@ json-parse-string/object
+     (should (equal (json-parse-string input :object-type 'plist)
+                    '(:abc [1 2 t]  :def :null :abc [9 :false])))))
+ 
++(ert-deftest json-parse-string/large-object ()
++  (let* ((input (concat "{"
++                        (mapconcat
++                         (lambda (i) (format "\"k%d\":[%d]" i i))
++                         (number-sequence 0 99)
++                         ",")
++                        "}"))
++         (actual (json-parse-string input)))
++    (should (hash-table-p actual))
++    (should (= (hash-table-count actual) 100))
++    (dotimes (i 100)
++      (should (equal (gethash (format "k%d" i) actual) (vector i))))))
++
+ (ert-deftest json-parse-string/object-unicode-keys ()
+   (let ((input "{\"é\":1,\"☃\":2,\"𐌐\":3}"))
+     (let ((actual (json-parse-string input)))
 -- 
 2.54.0.windows.1
 

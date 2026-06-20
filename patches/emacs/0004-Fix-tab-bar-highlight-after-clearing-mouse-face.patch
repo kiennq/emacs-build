@@ -1,12 +1,9 @@
-From 0c4e2250c59d1a30f766328078f6b294cd366bb7 Mon Sep 17 00:00:00 2001
+From e52f411f95ed16ec026630b8c4c2b7faee956fee Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Thu, 18 Jun 2026 12:18:35 -0700
-Subject: [PATCH] Fix tab-bar highlight after clearing mouse face
+Subject: [PATCH 04/24] Fix tab-bar highlight after clearing mouse face
 
 * src/xdisp.c (note_tab_bar_highlight): Re-hit-test after clearing mouse face.
----
- src/xdisp.c | 6 ++++++
- 1 file changed, 6 insertions(+)
 
 diff --git a/src/xdisp.c b/src/xdisp.c
 index 66024c27107..8e47839e1cb 100644

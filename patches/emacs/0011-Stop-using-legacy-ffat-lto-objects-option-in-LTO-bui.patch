@@ -1,18 +1,15 @@
-From 92509bd378a532580775c5a24cc9aabfb23509ee Mon Sep 17 00:00:00 2001
+From 14fca665d28bd92af0ccd58e4d11c917256f4f38 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Fri, 23 Aug 2024 04:51:47 -0700
-Subject: [PATCH 07/12] Stop using legacy -ffat-lto-objects option in LTO
+Subject: [PATCH 11/24] Stop using legacy -ffat-lto-objects option in LTO
  builds
 
----
- configure.ac | 7 -------
- 1 file changed, 7 deletions(-)
 
 diff --git a/configure.ac b/configure.ac
-index f98974bc5..a9469ffd8 100644
+index 09bd782240f..db5622aea7f 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -1981,13 +1981,6 @@ AC_DEFUN
+@@ -1995,13 +1995,6 @@ AC_DEFUN
  	 # command, so plugin name is appended to ARFLAGS.
  	 ARFLAGS="cru --plugin $GOLD_PLUGIN"
  	 RANLIB="$RANLIB --plugin $GOLD_PLUGIN"
@@ -27,5 +24,5 @@ index f98974bc5..a9469ffd8 100644
     fi
  fi)
 -- 
-2.46.0.windows.1
+2.54.0.windows.1
 

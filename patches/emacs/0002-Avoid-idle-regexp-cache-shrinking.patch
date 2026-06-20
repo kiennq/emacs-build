@@ -1,13 +1,10 @@
-From 9da4e2c2c1c136f81cbdfc66ad8a1bb9efefd9f2 Mon Sep 17 00:00:00 2001
+From 717ee13fd0692e0638def4b63b482730c9402d33 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Thu, 18 Jun 2026 15:21:55 -0700
-Subject: [PATCH] Avoid idle regexp-cache shrinking
+Subject: [PATCH 02/24] Avoid idle regexp-cache shrinking
 
 * src/igc.c (igc_on_idle): Do not shrink the regexp cache
 during idle processing.
----
- src/igc.c | 2 --
- 1 file changed, 2 deletions(-)
 
 diff --git a/src/igc.c b/src/igc.c
 index 1f581ab5256..bf13c76e9a8 100644

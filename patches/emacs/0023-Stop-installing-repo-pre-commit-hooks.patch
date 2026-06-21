@@ -1,0 +1,43 @@
+From 5c9f9e9969dbadeee0191dfc69fed1b698c0ceac Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 23 Apr 2026 13:11:47 -0700
+Subject: [PATCH 23/24] Stop installing repo pre-commit hooks
+
+Stop autogen.sh from installing the repo pre-commit hook.
+Also stop mapping pre-applypatch to that removed hook,
+so running ./autogen.sh git no longer recreates either
+hook.
+
+* autogen.sh: Remove pre-commit from tailored hook setup.
+(git_sample_hook_src): Stop mapping pre-applypatch to
+it.
+
+diff --git a/autogen.sh b/autogen.sh
+index 82e9db6333c..4f8df98bfc2 100755
+--- a/autogen.sh
++++ b/autogen.sh
+@@ -371,7 +371,7 @@ hooks=
+ tailored_hooks=
+ sample_hooks=
+ 
+-for hook in commit-msg pre-commit prepare-commit-msg post-commit \
++for hook in commit-msg prepare-commit-msg post-commit \
+             pre-push commit-msg-files.awk; do
+     cmp -- build-aux/git-hooks/$hook "$hooks/$hook" >/dev/null 2>&1 ||
+ 	tailored_hooks="$tailored_hooks $hook"
+@@ -384,11 +384,10 @@ git_sample_hook_src ()
+     if test ! -r "$src"; then
+ 	case $hook in
+ 	    applypatch-msg) src=build-aux/git-hooks/commit-msg;;
+-	    pre-applypatch) src=build-aux/git-hooks/pre-commit;;
+ 	esac
+     fi
+ }
+-for hook in applypatch-msg pre-applypatch; do
++for hook in applypatch-msg; do
+     git_sample_hook_src $hook
+     cmp -- "$src" "$hooks/$hook" >/dev/null 2>&1 ||
+ 	sample_hooks="$sample_hooks $hook"
+-- 
+2.54.0.windows.1
+

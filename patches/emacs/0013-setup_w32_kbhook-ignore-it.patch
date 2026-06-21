@@ -1,31 +1,27 @@
-From c4c8dc27c3eff7c5ebae097810800acea6736a65 Mon Sep 17 00:00:00 2001
+From 5181592d2b678b235046ad3a769d6a43263b901b Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
-Date: Tue, 3 Jun 2025 14:10:46 -0700
-Subject: [PATCH] setup_w32_kbhook: ignore it
+Date: Fri, 19 Jun 2026 18:00:59 -0700
+Subject: [PATCH 13/24] setup_w32_kbhook: ignore it
 
----
- src/w32console.c | 2 +-
- src/w32fns.c     | 2 +-
- 2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/src/w32console.c b/src/w32console.c
-index 1bca0cadf..e05655323 100644
+index 30a1f65f43f..9aaa011d9a4 100644
 --- a/src/w32console.c
 +++ b/src/w32console.c
-@@ -913,7 +913,7 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
+@@ -1134,7 +1134,7 @@ initialize_w32_display (struct terminal *term, int *width, int *height)
    EnumThreadWindows (GetCurrentThreadId (), find_ime_window, (LPARAM) &hwnd);
  
    /* Set up the keyboard hook.  */
 -  setup_w32_kbdhook (hwnd);
 +  /* setup_w32_kbdhook (hwnd); */
- }
  
- 
+   /* Set current_tty to the tty of this terminal */
+   current_tty = term->display_info.tty;
 diff --git a/src/w32fns.c b/src/w32fns.c
-index d7444f11e..78135be1a 100644
+index 3e95a48ac80..62e02916d42 100644
 --- a/src/w32fns.c
 +++ b/src/w32fns.c
-@@ -5699,7 +5699,7 @@ #define WM_TOUCH 576
+@@ -5723,7 +5723,7 @@ #define WM_TOUCH 576
  
  #ifdef WINDOWSNT
      case WM_CREATE:
@@ -35,5 +31,5 @@ index d7444f11e..78135be1a 100644
  #endif
  
 -- 
-2.46.0.windows.1
+2.54.0.windows.1
 

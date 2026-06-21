@@ -1,0 +1,241 @@
+From 047b3b5219141d776381060b00b20bd0ad274023 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 19 Jun 2026 17:26:24 -0700
+Subject: [PATCH 03/24] Fix JSON handling under IGC
+
+* src/json.c (symset_t): Store duplicate-key entries in a Lisp
+vector.
+(make_symset_entries): New function.
+(make_symset_table): Keep only the raw cleanup link in C memory.
+(symset_expand, symset_add): Use vector accessors for entries.
+* src/igc.c (igc_xpalloc_raw, igc_xpalloc_lisp): Initialize
+the new item count from *nitems instead of the old heap item count.
+* test/src/json-tests.el (json-parse-string/large-object): New test.
+
+diff --git a/src/igc.c b/src/igc.c
+index bf13c76e9a8..539677ee111 100644
+--- a/src/igc.c
++++ b/src/igc.c
+@@ -4170,7 +4170,7 @@ igc_xpalloc_raw (void *pa, ptrdiff_t *nitems,
+ 		 const char *label)
+ {
+   ptrdiff_t nitems_old = pa ? *nitems : 0;
+-  ptrdiff_t nitems_new = nitems_old;
++  ptrdiff_t nitems_new = *nitems;
+   ptrdiff_t nbytes = xpalloc_nbytes (pa, &nitems_new, nitems_incr_min,
+ 				     nitems_max, sizeof (void *));
+   void **old = pa;
+@@ -4211,7 +4211,7 @@ igc_xpalloc_lisp (Lisp_Object *pa, ptrdiff_t *nitems,
+ 		  const char *label)
+ {
+   ptrdiff_t nitems_old = pa ? *nitems : 0;
+-  ptrdiff_t nitems_new = nitems_old;
++  ptrdiff_t nitems_new = *nitems;
+   ptrdiff_t nbytes = xpalloc_nbytes (pa, &nitems_new, nitems_incr_min,
+ 				     nitems_max, word_size);
+   Lisp_Object *old = pa;
+diff --git a/src/json.c b/src/json.c
+index bdb3f6e5d91..90dd495da17 100644
+--- a/src/json.c
++++ b/src/json.c
+@@ -121,6 +121,7 @@ json_parse_args (ptrdiff_t nargs, Lisp_Object *args,
+   ptrdiff_t count;		/* symbols in table */
+   int bits;			/* log2(table size) */
+   struct symset_tbl *table;	/* heap-allocated table */
++  Lisp_Object entries;		/* vector of symbols, Qunbound where unused */
+ } symset_t;
+ 
+ struct symset_tbl
+@@ -128,8 +129,6 @@ json_parse_args (ptrdiff_t nargs, Lisp_Object *args,
+   /* Table used by the containing object if any, so that we can free all
+      tables if an error occurs.  */
+   struct symset_tbl *up;
+-  /* Table of symbols (2**bits elements), Qunbound where unused.  */
+-  Lisp_Object entries[];
+ };
+ 
+ static inline ptrdiff_t
+@@ -138,34 +137,35 @@ symset_size (int bits)
+   return (ptrdiff_t) {1} << bits;
+ }
+ 
++static Lisp_Object
++make_symset_entries (int bits)
++{
++  return make_vector (symset_size (bits), Qunbound);
++}
++
+ static struct symset_tbl *
+-make_symset_table (int bits, struct symset_tbl *up)
++make_symset_table (struct symset_tbl *up)
+ {
+-  int maxbits = min (SIZE_WIDTH - 2 - (word_size < 8 ? 2 : 3), 32);
+-  if (bits > maxbits)
+-    memory_full_up ();	/* Will never happen in practice.  */
+-#ifdef HAVE_MPS
+-  struct symset_tbl *st
+-    = igc_xzalloc_ambig (sizeof *st + (sizeof *st->entries << bits),
+-			 __func__);
+-#else
+-  struct symset_tbl *st = xmalloc (sizeof *st + (sizeof *st->entries << bits));
+-#endif
++  struct symset_tbl *st = xmalloc (sizeof *st);
+   st->up = up;
+-  ptrdiff_t size = symset_size (bits);
+-  for (ptrdiff_t i = 0; i < size; i++)
+-    st->entries[i] = Qunbound;
+   return st;
+ }
+ 
++static void
++free_symset_table (struct symset_tbl *st)
++{
++  xfree (st);
++}
++
+ /* Create a new symset to use for a new object.  */
+ static symset_t
+ push_symset (json_out_t *jo)
+ {
+   int bits = 4;
+-  struct symset_tbl *tbl = make_symset_table (bits, jo->ss_table);
++  struct symset_tbl *tbl = make_symset_table (jo->ss_table);
+   jo->ss_table = tbl;
+-  return (symset_t){ .count = 0, .bits = bits, .table = tbl };
++  return (symset_t) { .count = 0, .bits = bits, .table = tbl,
++		      .entries = make_symset_entries (bits) };
+ }
+ 
+ /* Destroy the current symset.  */
+@@ -173,11 +173,7 @@ push_symset (json_out_t *jo)
+ pop_symset (json_out_t *jo, symset_t *ss)
+ {
+   jo->ss_table = ss->table->up;
+-#ifdef HAVE_MPS
+-  igc_xfree (ss->table);
+-#else
+-  xfree (ss->table);
+-#endif
++  free_symset_table (ss->table);
+ }
+ 
+ /* Remove all heap-allocated symset tables, in case an error occurred.  */
+@@ -187,11 +183,7 @@ cleanup_symset_tables (struct symset_tbl *st)
+   while (st)
+     {
+       struct symset_tbl *up = st->up;
+-#ifdef HAVE_MPS
+-      igc_xfree (st);
+-#else
+-      xfree (st);
+-#endif
++      free_symset_table (st);
+       st = up;
+     }
+ }
+@@ -212,56 +204,49 @@ symset_hash (Lisp_Object sym, int bits)
+ static NO_INLINE void
+ symset_expand (symset_t *ss)
+ {
+-  struct symset_tbl *old_table = ss->table;
+   int oldbits = ss->bits;
+   ptrdiff_t oldsize = symset_size (oldbits);
+   int bits = oldbits + 1;
++  int maxbits = min (SIZE_WIDTH - 2 - (word_size < 8 ? 2 : 3), 32);
++  if (bits > maxbits)
++    memory_full_up ();	/* Will never happen in practice.  */
++  Lisp_Object old_entries = ss->entries;
+   ss->bits = bits;
+-  ss->table = make_symset_table (bits, old_table->up);
+-  /* Move all entries from the old table to the new one.  */
++  ss->entries = make_symset_entries (bits);
++  /* Move all entries from the old vector to the new one.  */
+   ptrdiff_t mask = symset_size (bits) - 1;
+-  struct symset_tbl *tbl = ss->table;
+   for (ptrdiff_t i = 0; i < oldsize; i++)
+     {
+-      Lisp_Object sym = old_table->entries[i];
++      Lisp_Object sym = AREF (old_entries, i);
+       if (!BASE_EQ (sym, Qunbound))
+ 	{
+ 	  ptrdiff_t j = symset_hash (sym, bits);
+-	  while (!BASE_EQ (tbl->entries[j], Qunbound))
++	  while (!BASE_EQ (AREF (ss->entries, j), Qunbound))
+ 	    j = (j + 1) & mask;
+-	  tbl->entries[j] = sym;
++	  ASET (ss->entries, j, sym);
+ 	}
+     }
+-#ifdef HAVE_MPS
+-  igc_xfree (old_table);
+-#else
+-  xfree (old_table);
+-#endif
+ }
+ 
+ /* If sym is in ss, return false; otherwise add it and return true.
+    Comparison is done by strict identity.  */
+ static inline bool
+-symset_add (json_out_t *jo, symset_t *ss, Lisp_Object sym)
++symset_add (symset_t *ss, Lisp_Object sym)
+ {
+   /* Make sure we don't fill more than half of the table.  */
+   if (ss->count >= (symset_size (ss->bits) >> 1))
+-    {
+-      symset_expand (ss);
+-      jo->ss_table = ss->table;
+-    }
++    symset_expand (ss);
+ 
+-  struct symset_tbl *tbl = ss->table;
+   ptrdiff_t mask = symset_size (ss->bits) - 1;
+   for (ptrdiff_t i = symset_hash (sym, ss->bits); ; i = (i + 1) & mask)
+     {
+-      Lisp_Object s = tbl->entries[i];
++      Lisp_Object s = AREF (ss->entries, i);
+       if (BASE_EQ (s, sym))
+ 	return false;		/* Previous occurrence found.  */
+       if (BASE_EQ (s, Qunbound))
+ 	{
+ 	  /* Not in set, add it.  */
+-	  tbl->entries[i] = sym;
++	  ASET (ss->entries, i, sym);
+ 	  ss->count++;
+ 	  return true;
+ 	}
+@@ -473,7 +458,7 @@ json_out_object_cons (json_out_t *jo, Lisp_Object obj)
+       key = maybe_remove_pos_from_symbol (key);
+       CHECK_TYPE (BARE_SYMBOL_P (key), Qsymbolp, key);
+ 
+-      if (symset_add (jo, &ss, key))
++      if (symset_add (&ss, key))
+ 	{
+ 	  if (!first)
+ 	    json_out_byte (jo, ',');
+diff --git a/test/src/json-tests.el b/test/src/json-tests.el
+index ec079f020bd..57c3f45df18 100644
+--- a/test/src/json-tests.el
++++ b/test/src/json-tests.el
+@@ -196,6 +196,19 @@ json-parse-string/object
+     (should (equal (json-parse-string input :object-type 'plist)
+                    '(:abc [1 2 t]  :def :null :abc [9 :false])))))
+ 
++(ert-deftest json-parse-string/large-object ()
++  (let* ((input (concat "{"
++                        (mapconcat
++                         (lambda (i) (format "\"k%d\":[%d]" i i))
++                         (number-sequence 0 99)
++                         ",")
++                        "}"))
++         (actual (json-parse-string input)))
++    (should (hash-table-p actual))
++    (should (= (hash-table-count actual) 100))
++    (dotimes (i 100)
++      (should (equal (gethash (format "k%d" i) actual) (vector i))))))
++
+ (ert-deftest json-parse-string/object-unicode-keys ()
+   (let ((input "{\"é\":1,\"☃\":2,\"𐌐\":3}"))
+     (let ((actual (json-parse-string input)))
+-- 
+2.54.0.windows.1
+

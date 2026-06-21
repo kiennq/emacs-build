@@ -1,14 +1,11 @@
-From 14833058edf6be0ec75f31ee99a56519d0e179d4 Mon Sep 17 00:00:00 2001
+From ba673f2ea59040a5b788375ba5c72fb12f2384e8 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Wed, 30 Apr 2025 22:27:07 -0700
-Subject: [PATCH 03/12] makefile: dont build leim
+Subject: [PATCH 08/24] makefile: dont build leim
 
----
- lisp/Makefile.in | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/lisp/Makefile.in b/lisp/Makefile.in
-index 999ae7402..d2402ba08 100644
+index 1045f5569b1..91255073f86 100644
 --- a/lisp/Makefile.in
 +++ b/lisp/Makefile.in
 @@ -132,12 +132,12 @@ SUBDIRS_SUBDIRS =
@@ -26,7 +23,7 @@ index 999ae7402..d2402ba08 100644
  
  # custom-deps and finder-data both used to scan _all_ the *.el files.
  # This could lead to problems in parallel builds if automatically
-@@ -405,7 +405,7 @@ .PHONY:
+@@ -406,7 +406,7 @@ .PHONY:
  
  ## make -C ../admin/unidata all should be here, but that would race
  ## with ../src.  See comments above for loaddefs.
@@ -36,5 +33,5 @@ index 999ae7402..d2402ba08 100644
  # (re)compile titdic-cnv before recursing into `leim` since its used to
  # generate some of the Quail source files from tables.
 -- 
-2.46.0.windows.1
+2.54.0.windows.1
 

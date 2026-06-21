@@ -1,0 +1,142 @@
+From 4097eb81c9476ff997ccf455949f898762a8a5e0 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 21 Jun 2026 09:48:57 -0700
+Subject: [PATCH] Fix W32 sleep notification crash
+
+Defer Windows suspend/resume notifications from the power callback
+to the W32 input thread.  This avoids Lisp allocation and kbd_buffer
+mutation on a foreign callback thread.
+
+* src/w32fns.c (post_sleep_notification): New function.
+(sleep_notification_callback): Post WM_EMACS_SLEEP_NOTIFY instead of
+storing a Lisp event.
+(w32_sleep_notification_event): New function.
+* src/w32term.c (w32_read_socket): Handle WM_EMACS_SLEEP_NOTIFY.
+* src/w32term.h (WM_EMACS_SLEEP_NOTIFY): New message.
+(w32_sleep_notification_event): Declare.
+---
+ src/w32fns.c  | 40 +++++++++++++++++++++++++++++++---------
+ src/w32term.c |  5 +++++
+ src/w32term.h |  3 +++
+ 3 files changed, 39 insertions(+), 9 deletions(-)
+
+diff --git a/src/w32fns.c b/src/w32fns.c
+index 6e1518106..df1f44e63 100644
+--- a/src/w32fns.c
++++ b/src/w32fns.c
+@@ -3657,6 +3657,7 @@ w32_name_of_message (UINT msg)
+       M (WM_EMACS_DRAGOVER),
+       M (WM_EMACS_DROP),
+       M (WM_EMACS_SET_TOOLKIT_THEME),
++      M (WM_EMACS_SLEEP_NOTIFY),
+ #undef M
+       { 0, 0 }
+   };
+@@ -11445,30 +11446,51 @@ DEFUN ("w32-system-sleep-block-count",
+ typedef ULONG (CALLBACK *PMY_DEVICE_NOTIFY_CALLBACK_ROUTINE)
+   (PVOID Context,  ULONG Type,  PVOID Setting);
+ 
++static void
++post_sleep_notification (ULONG type)
++{
++  W32Msg wmsg;
++
++  memset (&wmsg, 0, sizeof wmsg);
++  wmsg.msg.hwnd = NULL;
++  wmsg.msg.message = WM_EMACS_SLEEP_NOTIFY;
++  wmsg.msg.wParam = type;
++  wmsg.msg.time = GetTickCount ();
++  post_msg (&wmsg);
++}
++
+ static ULONG CALLBACK ALIGN_STACK
+ sleep_notification_callback (PVOID _Context, ULONG Type, PVOID _Setting)
+ {
+-  struct input_event ie;
+-  EVENT_INIT (ie);
+-  ie.kind = SLEEP_EVENT;
+-
+   switch (Type)
+     {
+     case PBT_APMRESUMEAUTOMATIC:
+       /* Ignore this event.  No user is present.  */
+       break;
+     case PBT_APMSUSPEND:
+-      ie.arg = list1 (Qpre_sleep);
+-      kbd_buffer_store_event (&ie);
+-      break;
+     case PBT_APMRESUMESUSPEND:
+-      ie.arg = list1 (Qpost_wake);
+-      kbd_buffer_store_event (&ie);
++      post_sleep_notification (Type);
+       break;
+     }
+   return 0;
+ }
+ 
++bool
++w32_sleep_notification_event (WPARAM type, struct input_event *ie)
++{
++  EVENT_INIT (*ie);
++
++  if (type == PBT_APMSUSPEND)
++    ie->arg = list1 (Qpre_sleep);
++  else if (type == PBT_APMRESUMESUSPEND)
++    ie->arg = list1 (Qpost_wake);
++  else
++    return false;
++
++  ie->kind = SLEEP_EVENT;
++  return true;
++}
++
+ typedef HPOWERNOTIFY (WINAPI * RegisterSuspendResumeNotification_Proc)
+   (IN HANDLE, IN DWORD);
+ static RegisterSuspendResumeNotification_Proc RegisterSuspendResumeNotification_fn = NULL;
+diff --git a/src/w32term.c b/src/w32term.c
+index 0602ee6bc..0b3449ef8 100644
+--- a/src/w32term.c
++++ b/src/w32term.c
+@@ -6357,6 +6357,11 @@ w32_read_socket (struct terminal *terminal,
+ 	  }
+ 	  break;
+ 
++	case WM_EMACS_SLEEP_NOTIFY:
++	  if (!w32_sleep_notification_event (msg.msg.wParam, &inev))
++	    inev.kind = NO_EVENT;
++	  break;
++
+ #if HAVE_W32NOTIFY
+ 	case WM_EMACS_FILENOTIFY:
+ 	  f = w32_window_to_frame (dpyinfo, msg.msg.hwnd);
+diff --git a/src/w32term.h b/src/w32term.h
+index cba1a13c5..a5d33f980 100644
+--- a/src/w32term.h
++++ b/src/w32term.h
+@@ -222,6 +222,7 @@ struct w32_display_info
+ /* This is a chain of structures for all the displays currently in use.  */
+ extern struct w32_display_info *x_display_list;
+ extern struct w32_display_info one_w32_display_info;
++struct input_event;
+ 
+ /* These 2 are set by w32fns.c and examined in w32term.c.  */
+ extern HMENU current_popup_menu;
+@@ -274,6 +275,7 @@ extern const char *w32_get_string_resource (void *v_rdb,
+ extern frame_parm_handler w32_frame_parm_handlers[];
+ extern void w32_default_font_parameter (struct frame* f, Lisp_Object parms);
+ extern Lisp_Object w32_process_dnd_data (int format, void *pDataObj);
++extern bool w32_sleep_notification_event (WPARAM, struct input_event *);
+ extern void w32_register_for_sleep_notifications (void);
+ 
+ 
+@@ -717,6 +719,7 @@ do { \
+ #define WM_EMACS_DROP                  (WM_EMACS_START + 28)
+ #define WM_EMACS_END                   (WM_EMACS_START + 29)
+ #define WM_EMACS_SET_TOOLKIT_THEME     (WM_EMACS_START + 30)
++#define WM_EMACS_SLEEP_NOTIFY          (WM_EMACS_START + 31)
+ 
+ #define WND_FONTWIDTH_INDEX    (0)
+ #define WND_LINEHEIGHT_INDEX   (4)
+-- 
+2.54.0.windows.1
+

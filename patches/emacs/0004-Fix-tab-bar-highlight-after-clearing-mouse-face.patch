@@ -1,0 +1,27 @@
+From e52f411f95ed16ec026630b8c4c2b7faee956fee Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 18 Jun 2026 12:18:35 -0700
+Subject: [PATCH 04/24] Fix tab-bar highlight after clearing mouse face
+
+* src/xdisp.c (note_tab_bar_highlight): Re-hit-test after clearing mouse face.
+
+diff --git a/src/xdisp.c b/src/xdisp.c
+index 66024c27107..8e47839e1cb 100644
+--- a/src/xdisp.c
++++ b/src/xdisp.c
+@@ -15414,6 +15414,12 @@ note_tab_bar_highlight (struct frame *f, int x, int y)
+ 
+   clear_mouse_face (hlinfo);
+ 
++  /* clear_mouse_face may have redrawn the row.  Hit-test again before
++     using glyph positions from the current matrix.  */
++  if (get_tab_bar_item (f, x, y, &glyph, &hpos, &vpos, &prop_idx,
++			&close_p) < 0)
++    return;
++
+   bool mouse_down_p = false;
+   /* Mouse is down, but on different tab-bar item?  Or alternatively,
+      the mouse might've been pressed somewhere we don't know about,
+-- 
+2.54.0.windows.1
+

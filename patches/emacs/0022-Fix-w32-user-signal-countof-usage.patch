@@ -1,0 +1,77 @@
+From 5141661fa884c569dbfc17546ddfe4e2e596870e Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 19 Jun 2026 18:21:11 -0700
+Subject: [PATCH 22/24] Fix w32 user signal countof usage
+
+
+diff --git a/src/w32xfns.c b/src/w32xfns.c
+index 2fb705e80a2..13330338bcc 100644
+--- a/src/w32xfns.c
++++ b/src/w32xfns.c
+@@ -84,7 +84,7 @@ init_w32_user_signal_events (void)
+   if (!w32_user_signal_stop)
+     return;
+ 
+-  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++  for (int i = 0; i < countof (w32_user_signal_events); ++i)
+     {
+       snprintf (name, sizeof name, "Local\\Emacs-%lu-%d",
+                 (unsigned long) pid, w32_user_signal_events[i].sig);
+@@ -107,7 +107,7 @@ init_w32_user_signal_events (void)
+                                          NULL, 0, NULL);
+   if (!w32_user_signal_thread)
+     {
+-      for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++      for (int i = 0; i < countof (w32_user_signal_events); ++i)
+         if (w32_user_signal_events[i].event)
+           {
+             CloseHandle (w32_user_signal_events[i].event);
+@@ -131,7 +131,7 @@ delete_w32_user_signal_events (void)
+       w32_user_signal_thread = NULL;
+     }
+ 
+-  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++  for (int i = 0; i < countof (w32_user_signal_events); ++i)
+     if (w32_user_signal_events[i].event)
+       {
+         CloseHandle (w32_user_signal_events[i].event);
+@@ -149,23 +149,23 @@ delete_w32_user_signal_events (void)
+ static DWORD WINAPI
+ w32_user_signal_thread_proc (LPVOID arg)
+ {
+-  HANDLE waits[1 + ARRAYELTS (w32_user_signal_events)];
++  HANDLE waits[1 + countof (w32_user_signal_events)];
+   (void) arg;
+ 
+   waits[0] = w32_user_signal_stop;
+-  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++  for (int i = 0; i < countof (w32_user_signal_events); ++i)
+     waits[i + 1] = w32_user_signal_events[i].event;
+ 
+   while (true)
+     {
+-      DWORD rc = WaitForMultipleObjects (ARRAYELTS (waits), waits,
++      DWORD rc = WaitForMultipleObjects (countof (waits), waits,
+                                          FALSE, INFINITE);
+ 
+       if (rc == WAIT_OBJECT_0)
+         return 0;
+ 
+       if (WAIT_OBJECT_0 < rc
+-          && rc < WAIT_OBJECT_0 + ARRAYELTS (waits))
++          && rc < WAIT_OBJECT_0 + countof (waits))
+         {
+           int i = rc - WAIT_OBJECT_0 - 1;
+ 
+@@ -180,7 +180,7 @@ w32_user_signal_thread_proc (LPVOID arg)
+ int
+ w32_get_next_pending_user_signal (void)
+ {
+-  for (int i = 0; i < ARRAYELTS (w32_user_signal_events); ++i)
++  for (int i = 0; i < countof (w32_user_signal_events); ++i)
+     {
+       LONG pending = InterlockedCompareExchange (&w32_user_signal_events[i].pending,
+                                                  0, 0);
+-- 
+2.54.0.windows.1
+

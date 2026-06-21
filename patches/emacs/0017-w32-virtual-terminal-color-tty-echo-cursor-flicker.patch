@@ -1,0 +1,83 @@
+From 11c50ca9116f1fa3c39f1a2fd6a4e86af4d37ff0 Mon Sep 17 00:00:00 2001
+From: ewantown <ewan@etown.dev>
+Date: Wed, 1 Oct 2025 10:24:35 -0700
+Subject: [PATCH 17/24] w32 virtual terminal color + tty-echo-cursor-flicker
+
+
+diff --git a/etc/NEWS b/etc/NEWS
+index 672e8b62971..d616ad04783 100644
+--- a/etc/NEWS
++++ b/etc/NEWS
+@@ -192,6 +192,18 @@ method call returns with a D-Bus error; the error is passed as argument.
+ 
+ * Changes in Emacs 32.1 on Non-Free Operating Systems
+ 
+++++
++** Windows Terminal can now display 256 and 24-bit RGB color.
++Previously, terminal sessions on Windows supported display of 16 colors.
++There is now support for 8-bit (256 color) and 24-bit RGB (true color).
++The new mechanism will be enabled automatically when supported.
++It defaults to 24-bit RGB color, but can be set to 8, 16, '8bit, or '24bit
++by passing the '--color' flag or setting the 'tty-color-mode' frame parameter.
++Use of the new mechanism is controlled by an internal variable that can be
++set and inspected via the functions 'w32-use-virtual-terminal' and
++'w32-use-virtual-terminal-p' (respectively).  See the manual entry specific
++to MS-Windows for more details.
++
+ 
+ ----------------------------------------------------------------------
+ This file is part of GNU Emacs.
+diff --git a/src/dispnew.c b/src/dispnew.c
+index d7141f953cc..0f0575d0ced 100644
+--- a/src/dispnew.c
++++ b/src/dispnew.c
+@@ -5825,7 +5825,16 @@ write_matrix (struct frame *f, bool inhibit_id_p, bool updating_menu_p)
+      is done so that messages are made visible when pausing.  */
+   int last_row = f->desired_matrix->nrows - 1;
+   if (MATRIX_ROW_ENABLED_P (f->desired_matrix, last_row))
+-    write_row (f, last_row, updating_menu_p);
++    {
++      int cursor_hidden = (FRAME_TTY (f))->cursor_hidden;
++      if (!cursor_in_echo_area && !cursor_hidden)
++	tty_hide_cursor (FRAME_TTY (f));
++
++      write_row (f, last_row, updating_menu_p);
++
++      if (!cursor_in_echo_area && !cursor_hidden)
++	tty_show_cursor (FRAME_TTY (f));
++    }
+ 
+   if (first_row >= 0)
+     for (int i = first_row; i < last_row; ++i)
+diff --git a/src/w32inevt.h b/src/w32inevt.h
+index 262bab60636..d3bd2556b80 100644
+--- a/src/w32inevt.h
++++ b/src/w32inevt.h
+@@ -14,11 +14,13 @@
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+-along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.  */
++along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>. */
+ 
+ #ifndef EMACS_W32INEVT_H
+ #define EMACS_W32INEVT_H
+ 
++#include "termhooks.h" /* for Time, enum scroll_bar_part */
++
+ extern int w32_console_unicode_input;
+ 
+ extern int w32_console_read_socket (struct terminal *term,
+@@ -26,7 +28,7 @@ #define EMACS_W32INEVT_H
+ extern void w32_console_mouse_position (struct frame **f, int insist,
+ 					Lisp_Object *bar_window,
+ 					enum scroll_bar_part *part,
+-					Lisp_Object *x, Lisp_Object *y,
+-					Time *time);
++					Lisp_Object *x,
++					Lisp_Object *y, Time *time);
+ 
+ #endif /* EMACS_W32INEVT_H */
+-- 
+2.54.0.windows.1
+

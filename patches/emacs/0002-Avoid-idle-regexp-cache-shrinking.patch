@@ -1,0 +1,24 @@
+From 717ee13fd0692e0638def4b63b482730c9402d33 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 18 Jun 2026 15:21:55 -0700
+Subject: [PATCH 02/24] Avoid idle regexp-cache shrinking
+
+* src/igc.c (igc_on_idle): Do not shrink the regexp cache
+during idle processing.
+
+diff --git a/src/igc.c b/src/igc.c
+index 1f581ab5256..bf13c76e9a8 100644
+--- a/src/igc.c
++++ b/src/igc.c
+@@ -4862,8 +4862,6 @@ igc_on_idle (void)
+   record_unwind_protect_void (allow_on_idle);
+   inhibit_on_idle = true;
+ 
+-  shrink_regexp_cache ();
+-
+   struct igc_buffer_it buffer_it = make_buffer_it ();
+   IGC_WITH_CLOCK (clock, 0.1)
+   {
+-- 
+2.54.0.windows.1
+

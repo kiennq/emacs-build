@@ -1,7 +1,7 @@
-From 2c70945bb79ef14d65cd811fb51c2542c3faaa1e Mon Sep 17 00:00:00 2001
+From 3b38cd3b75d024a13271159457c9aa2067e485f0 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Sun, 22 Mar 2026 12:24:08 -0700
-Subject: [PATCH] Add Windows emacsclient signal support
+Subject: [PATCH 21/24] Add Windows emacsclient signal support
 
 * lib-src/emacsclient.c (--pid, --signal, get_server_pid):
 Add Windows signal option parsing and PID lookup.
@@ -27,18 +27,9 @@ signal events and worker thread.
 * test/lisp/server-tests.el
 (server-tests/emacsclient/signal-by-pid): Add Windows signal
 regression test.
----
- lib-src/emacsclient.c     | 159 +++++++++++++++++++++++++++++++++++-
- src/keyboard.c            |  46 ++++++++++-
- src/keyboard.h            |   2 +
- src/sysdep.c              |   5 +-
- src/w32term.h             |   1 +
- src/w32xfns.c             | 164 +++++++++++++++++++++++++++++++++++++-
- test/lisp/server-tests.el |  28 +++++++
- 7 files changed, 396 insertions(+), 9 deletions(-)
 
 diff --git a/lib-src/emacsclient.c b/lib-src/emacsclient.c
-index 4f3215ea6b..3571eefc5c 100644
+index 381481c7fbd..9fff795483a 100644
 --- a/lib-src/emacsclient.c
 +++ b/lib-src/emacsclient.c
 @@ -28,7 +28,6 @@ Copyright (C) 1986-2026 Free Software Foundation, Inc.
@@ -58,7 +49,7 @@ index 4f3215ea6b..3571eefc5c 100644
  #else /* !WINDOWSNT */
  
  # ifdef HAVE_NTGUI
-@@ -155,6 +156,14 @@ #define DEFAULT_TIMEOUT (30)
+@@ -157,6 +158,14 @@ #define DEFAULT_TIMEOUT (30)
  /* If nonzero, PID of the Emacs server process.  */
  static pid_t emacs_pid;
  
@@ -73,7 +64,7 @@ index 4f3215ea6b..3571eefc5c 100644
  /* If non-NULL, a string that should form a frame parameter alist to
     be used for the new frame.  */
  static char const *frame_parameters;
-@@ -186,6 +195,10 @@ #define DEFAULT_TIMEOUT (30)
+@@ -188,6 +197,10 @@ #define DEFAULT_TIMEOUT (30)
    { "parent-id", required_argument, NULL, 'p' },
    { "timeout",	required_argument, NULL, 'w' },
    { "tramp",	required_argument, NULL, 'T' },
@@ -84,7 +75,7 @@ index 4f3215ea6b..3571eefc5c 100644
    { 0, 0, 0, 0 }
  };
  
-@@ -196,7 +209,11 @@ #define DEFAULT_TIMEOUT (30)
+@@ -198,7 +211,11 @@ #define DEFAULT_TIMEOUT (30)
  #ifdef SOCKETS_IN_FILE_SYSTEM
    "s:"
  #endif
@@ -136,7 +127,7 @@ index 4f3215ea6b..3571eefc5c 100644
  #ifdef SOCKETS_IN_FILE_SYSTEM
  "-s SOCKET, --socket-name=SOCKET\n\
  			Set filename of the UNIX socket for communication\n"
-@@ -1034,6 +1076,114 @@ get_server_config (const char *config_file, struct sockaddr_in *server,
+@@ -1053,6 +1095,114 @@ get_server_config (const char *config_file, struct sockaddr_in *server,
    return true;
  }
  
@@ -251,7 +242,7 @@ index 4f3215ea6b..3571eefc5c 100644
  /* Like socket (DOMAIN, TYPE, PROTOCOL), except arrange for the
     resulting file descriptor to be close-on-exec.  */
  
-@@ -1995,6 +2145,11 @@ main (int argc, char **argv)
+@@ -2016,6 +2166,11 @@ main (int argc, char **argv)
    /* Process options.  */
    decode_options (argc, argv);
  
@@ -264,7 +255,7 @@ index 4f3215ea6b..3571eefc5c 100644
      {
        message (true, ("%s: file name or argument required\n"
 diff --git a/src/keyboard.c b/src/keyboard.c
-index c63440059e..c7232138e0 100644
+index f63e268bfc7..4ba7436f9e2 100644
 --- a/src/keyboard.c
 +++ b/src/keyboard.c
 @@ -418,9 +418,14 @@ #define READABLE_EVENTS_IGNORE_SQUEEZABLES	(1 << 2)
@@ -350,7 +341,7 @@ index c63440059e..c7232138e0 100644
  static char *
  find_user_signal_name (int sig)
  {
-@@ -14606,6 +14645,7 @@ syms_of_keyboard (void)
+@@ -14619,6 +14658,7 @@ syms_of_keyboard (void)
    DEFSYM (Qsuspend_hook, "suspend-hook");
    DEFSYM (Qsuspend_resume_hook, "suspend-resume-hook");
    DEFSYM (Qcommand_error_default_function, "command-error-default-function");
@@ -359,7 +350,7 @@ index c63440059e..c7232138e0 100644
    DEFSYM (Qascii_character, "ascii-character");
  }
 diff --git a/src/keyboard.h b/src/keyboard.h
-index 3f1560d5a1..75e3808d0c 100644
+index 3f1560d5a10..75e3808d0c3 100644
 --- a/src/keyboard.h
 +++ b/src/keyboard.h
 @@ -516,6 +516,8 @@ kbd_buffer_store_event_hold (struct input_event *event,
@@ -372,10 +363,10 @@ index 3f1560d5a1..75e3808d0c 100644
  extern int tty_read_avail_input (struct terminal *, struct input_event *);
  extern struct timespec timer_check (void);
 diff --git a/src/sysdep.c b/src/sysdep.c
-index 8895655566..3801fd899b 100644
+index 069e052d3ab..2bd82e5f232 100644
 --- a/src/sysdep.c
 +++ b/src/sysdep.c
-@@ -2077,7 +2077,10 @@ init_signals (void)
+@@ -2076,7 +2076,10 @@ init_signals (void)
  
    /* SIGUSR1 and SIGUSR2 are used internally by the android_select
       function.  */
@@ -388,7 +379,7 @@ index 8895655566..3801fd899b 100644
    add_user_signal (SIGUSR1, "sigusr1");
  #endif
 diff --git a/src/w32term.h b/src/w32term.h
-index f28cd9a74b..cba1a13c52 100644
+index f28cd9a74b9..cba1a13c52f 100644
 --- a/src/w32term.h
 +++ b/src/w32term.h
 @@ -768,6 +768,7 @@ #define leave_crit() LeaveCriticalSection (&critsect)
@@ -400,7 +391,7 @@ index f28cd9a74b..cba1a13c52 100644
  extern BOOL get_next_msg (W32Msg *, BOOL);
  extern BOOL post_msg (W32Msg *);
 diff --git a/src/w32xfns.c b/src/w32xfns.c
-index f920e40734..e5365d6d3a 100644
+index df3d42c9d28..2fb705e80a2 100644
 --- a/src/w32xfns.c
 +++ b/src/w32xfns.c
 @@ -54,6 +54,152 @@ #define myfree(lp) GlobalFreePtr (lp)
@@ -613,7 +604,7 @@ index f920e40734..e5365d6d3a 100644
  	case WM_WTSSESSION_CHANGE:
  	  if (msg.wParam == WTS_SESSION_LOCK)
 diff --git a/test/lisp/server-tests.el b/test/lisp/server-tests.el
-index a96dc85074..8c9e3a306c 100644
+index a96dc85074d..8c9e3a306cc 100644
 --- a/test/lisp/server-tests.el
 +++ b/test/lisp/server-tests.el
 @@ -187,6 +187,34 @@ server-tests/emacsclient/eval
@@ -652,5 +643,5 @@ index a96dc85074..8c9e3a306c 100644
    "Ensure that `server-force-stop' doesn't delete frames.  See bug#58877.
  Note: since that bug is about a behavior when killing Emacs, this
 -- 
-2.53.0.windows.2
+2.54.0.windows.1
 

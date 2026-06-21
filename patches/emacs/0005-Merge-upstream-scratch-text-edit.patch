@@ -1,46 +1,8 @@
-From 60ec5a115300108231732e14a373e4877338587b Mon Sep 17 00:00:00 2001
+From 867f51ce944bbe09c115eef0c03ea424ac5bbb2b Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Wed, 3 Dec 2025 02:07:43 -0800
-Subject: [PATCH] Merge upstream/scratch/text-edit
+Subject: [PATCH 05/24] Merge upstream/scratch/text-edit
 
----
- .clang-format                |   2 +
- src/Makefile.in              |   3 +-
- src/alloc.c                  |  57 ++-
- src/buffer.c                 | 125 ++----
- src/buffer.h                 | 130 +-----
- src/callint.c                |   4 +-
- src/coding.c                 |  38 +-
- src/composite.c              |   4 +-
- src/dispextern.h             |   2 +-
- src/editfns.c                |  52 +--
- src/emacs.c                  |   2 +
- src/fns.c                    |  14 +-
- src/igc.c                    | 145 +------
- src/igc.h                    |   4 +-
- src/indent.c                 |   7 +-
- src/insdel.c                 | 140 +------
- src/lisp.h                   |  38 +-
- src/lread.c                  |  11 +-
- src/marker-vector.c          | 378 +++++++++++++++++
- src/marker-vector.h          | 106 +++++
- src/marker.c                 | 482 ++--------------------
- src/pdumper.c                |  15 +-
- src/print.c                  |   2 +-
- src/process.c                |   9 +-
- src/text-index.c             | 760 +++++++++++++++++++++++++++++++++++
- src/text-index.h             |  33 ++
- src/textconv.c               |  14 +-
- src/undo.c                   |   5 +-
- src/window.c                 |  58 ++-
- src/xdisp.c                  |  38 +-
- test/src/text-index-tests.el |  95 +++++
- 31 files changed, 1644 insertions(+), 1129 deletions(-)
- create mode 100644 src/marker-vector.c
- create mode 100644 src/marker-vector.h
- create mode 100644 src/text-index.c
- create mode 100644 src/text-index.h
- create mode 100644 test/src/text-index-tests.el
 
 diff --git a/.clang-format b/.clang-format
 index 7929a7435f2..8fea915960f 100644
@@ -56,7 +18,7 @@ index 7929a7435f2..8fea915960f 100644
    - FOR_EACH_TAIL_SAFE
    - FOR_EACH_LIVE_BUFFER
 diff --git a/src/Makefile.in b/src/Makefile.in
-index 8101d4406da..79540a826bd 100644
+index b42f381c6bd..fa58e1cbd04 100644
 --- a/src/Makefile.in
 +++ b/src/Makefile.in
 @@ -455,7 +455,7 @@ base_obj =
@@ -77,10 +39,10 @@ index 8101d4406da..79540a826bd 100644
  	$(W32_OBJ) $(WINDOW_SYSTEM_OBJ) $(XGSELOBJ)			       \
  	$(HAIKU_OBJ) $(PGTK_OBJ) $(ANDROID_OBJ)
 diff --git a/src/alloc.c b/src/alloc.c
-index 1be800f71e5..4b73f348d1e 100644
+index e812f4abf1c..27fe50ef563 100644
 --- a/src/alloc.c
 +++ b/src/alloc.c
-@@ -3943,11 +3943,7 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
+@@ -3972,11 +3972,7 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
    struct Lisp_Marker *p = ALLOCATE_PLAIN_PSEUDOVECTOR (struct Lisp_Marker,
  						       PVEC_MARKER);
    p->buffer = 0;
@@ -93,7 +55,7 @@ index 1be800f71e5..4b73f348d1e 100644
    p->insertion_type = 0;
    p->need_adjustment = 0;
    return make_lisp_ptr (p, Lisp_Vectorlike);
-@@ -3957,27 +3953,18 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
+@@ -3986,27 +3982,18 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
     at character position CHARPOS and byte position BYTEPOS.  */
  
  Lisp_Object
@@ -124,7 +86,7 @@ index 1be800f71e5..4b73f348d1e 100644
    return make_lisp_ptr (m, Lisp_Vectorlike);
  }
  
-@@ -6511,6 +6498,13 @@ mark_buffer (struct buffer *buffer)
+@@ -6564,6 +6551,13 @@ mark_buffer (struct buffer *buffer)
  
    mark_interval_tree (buffer_intervals (buffer));
  
@@ -138,7 +100,7 @@ index 1be800f71e5..4b73f348d1e 100644
    /* For now, we just don't mark the undo_list.  It's done later in
       a special way just before the sweep phase, and after stripping
       some of its elements that are not needed any more.
-@@ -6518,7 +6512,7 @@ mark_buffer (struct buffer *buffer)
+@@ -6571,7 +6565,7 @@ mark_buffer (struct buffer *buffer)
       for dead buffers, the undo_list should be nil (set by Fkill_buffer),
       but just to be on the safe side, we mark it here.  */
    if (!BUFFER_LIVE_P (buffer))
@@ -147,7 +109,7 @@ index 1be800f71e5..4b73f348d1e 100644
  
    if (!itree_empty_p (buffer->overlays))
      mark_overlays (buffer->overlays->root);
-@@ -7350,21 +7344,22 @@ sweep_symbols (void)
+@@ -7403,21 +7397,22 @@ sweep_symbols (void)
    gcstat.total_free_symbols = num_free;
  }
  
@@ -184,10 +146,10 @@ index 1be800f71e5..4b73f348d1e 100644
  
  NO_INLINE /* For better stack traces */
 diff --git a/src/buffer.c b/src/buffer.c
-index f5891c992d3..6cb71c70c13 100644
+index ab070f6d5cd..e65fedd3100 100644
 --- a/src/buffer.c
 +++ b/src/buffer.c
-@@ -44,6 +44,7 @@ Copyright (C) 1985-2025 Free Software Foundation, Inc.
+@@ -44,6 +44,7 @@ Copyright (C) 1985-2026 Free Software Foundation, Inc.
  #include "itree.h"
  #include "pdumper.h"
  #include "igc.h"
@@ -466,7 +428,7 @@ index f5891c992d3..6cb71c70c13 100644
  	 between chars and bytes.  */
        /* FIXME: Is it worth the trouble, really?  Couldn't we just throw
 diff --git a/src/buffer.h b/src/buffer.h
-index a5283e5dc11..635ba64fb42 100644
+index 104b8dcad38..d48e2ad19ca 100644
 --- a/src/buffer.h
 +++ b/src/buffer.h
 @@ -26,6 +26,7 @@ #define EMACS_BUFFER_H
@@ -525,7 +487,7 @@ index a5283e5dc11..635ba64fb42 100644
    };
  
  /* Most code should use this macro to access Lisp fields in struct buffer.  */
-@@ -746,114 +742,6 @@ #define BVAR(buf, field) ((buf)->field ## _)
+@@ -749,114 +745,6 @@ #define BVAR(buf, field) ((buf)->field ## _)
    Lisp_Object undo_list_;
  };
  
@@ -640,7 +602,7 @@ index a5283e5dc11..635ba64fb42 100644
  struct sortvec
  {
    Lisp_Object overlay;
-@@ -1929,4 +1817,6 @@ dec_both (ptrdiff_t *charpos, ptrdiff_t *bytepos)
+@@ -1933,4 +1821,6 @@ dec_both (ptrdiff_t *charpos, ptrdiff_t *bytepos)
  int compare_overlays (const void *v1, const void *v2);
  void make_sortvec_item (struct sortvec *item, Lisp_Object overlay);
  
@@ -648,10 +610,10 @@ index a5283e5dc11..635ba64fb42 100644
 +
  #endif /* EMACS_BUFFER_H */
 diff --git a/src/callint.c b/src/callint.c
-index ee06e6973f2..8a71e6ba171 100644
+index 1746dd57704..40f5744d217 100644
 --- a/src/callint.c
 +++ b/src/callint.c
-@@ -500,7 +500,7 @@ DEFUN ("call-interactively", Fcall_interactively, Scall_interactively, 1, 3, 0,
+@@ -504,7 +504,7 @@ DEFUN ("call-interactively", Fcall_interactively, Scall_interactively, 1, 3, 0,
  	  break;
  
  	case 'd':		/* Value of point.  Does not do I/O.  */
@@ -660,7 +622,7 @@ index ee06e6973f2..8a71e6ba171 100644
  	  args[i] = point_marker;
  	  /* visargs[i] = Qnil; */
  	  varies[i] = 1;
-@@ -658,7 +658,7 @@ DEFUN ("call-interactively", Fcall_interactively, Scall_interactively, 1, 3, 0,
+@@ -672,7 +672,7 @@ DEFUN ("call-interactively", Fcall_interactively, Scall_interactively, 1, 3, 0,
  	case 'r':		/* Region, point and mark as 2 args.  */
  	  {
  	    check_mark (true);
@@ -670,10 +632,10 @@ index ee06e6973f2..8a71e6ba171 100644
  	    /* visargs[i] = visargs[i + 1] = Qnil; */
  	    args[i] = PT < mark ? point_marker : BVAR (current_buffer, mark);
 diff --git a/src/coding.c b/src/coding.c
-index 594677b224e..fc5ffb9c610 100644
+index e69fb330ddc..e0369a682c9 100644
 --- a/src/coding.c
 +++ b/src/coding.c
-@@ -8122,13 +8122,13 @@ decode_coding_object (struct coding_system *coding,
+@@ -8140,13 +8140,13 @@ decode_coding_object (struct coding_system *coding,
  	move_gap_both (from, from_byte);
        if (BASE_EQ (src_object, dst_object))
  	{
@@ -690,7 +652,7 @@ index 594677b224e..fc5ffb9c610 100644
  	  saved_pt = PT, saved_pt_byte = PT_BYTE;
  	  TEMP_SET_PT_BOTH (from, from_byte);
  	  current_buffer->text->inhibit_shrinking = true;
-@@ -8253,26 +8253,25 @@ decode_coding_object (struct coding_system *coding,
+@@ -8271,26 +8271,25 @@ decode_coding_object (struct coding_system *coding,
  
        if (need_marker_adjustment)
  	{
@@ -723,7 +685,7 @@ index 594677b224e..fc5ffb9c610 100644
  	}
      }
  
-@@ -8343,13 +8342,13 @@ encode_coding_object (struct coding_system *coding,
+@@ -8361,13 +8360,13 @@ encode_coding_object (struct coding_system *coding,
    if (BASE_EQ (src_object, dst_object) && BUFFERP (src_object))
      {
        same_buffer = true;
@@ -740,7 +702,7 @@ index 594677b224e..fc5ffb9c610 100644
      }
  
    if (! NILP (CODING_ATTR_PRE_WRITE (attrs)))
-@@ -8507,26 +8506,25 @@ encode_coding_object (struct coding_system *coding,
+@@ -8525,26 +8524,25 @@ encode_coding_object (struct coding_system *coding,
  
        if (need_marker_adjustment)
  	{
@@ -774,7 +736,7 @@ index 594677b224e..fc5ffb9c610 100644
      }
  
 diff --git a/src/composite.c b/src/composite.c
-index 97baa5c56a2..8603bf2cec1 100644
+index 8bb36049aa4..dc8ddb8b1f8 100644
 --- a/src/composite.c
 +++ b/src/composite.c
 @@ -941,7 +941,7 @@ autocmp_chars (Lisp_Object rule, ptrdiff_t charpos, ptrdiff_t bytepos,
@@ -796,10 +758,10 @@ index 97baa5c56a2..8603bf2cec1 100644
  			    pos, make_fixnum (to), font_object, string,
  			    direction);
 diff --git a/src/dispextern.h b/src/dispextern.h
-index d28a882a601..3d15c3b20cd 100644
+index ef301ee45ac..2d6b210f30b 100644
 --- a/src/dispextern.h
 +++ b/src/dispextern.h
-@@ -322,7 +322,7 @@ #define CLIP_TEXT_POS_FROM_MARKER(POS, MARKER)		\
+@@ -334,7 +334,7 @@ #define CLIP_TEXT_POS_FROM_MARKER(POS, MARKER)		\
  /* Set marker MARKER from text position POS.  */
  
  #define SET_MARKER_FROM_TEXT_POS(MARKER, POS) \
@@ -809,7 +771,7 @@ index d28a882a601..3d15c3b20cd 100644
  /* Value is non-zero if character and byte positions of POS1 and POS2
     are equal.  */
 diff --git a/src/editfns.c b/src/editfns.c
-index e704d617869..ee8adf314f4 100644
+index d729c96d356..3b982a1fe73 100644
 --- a/src/editfns.c
 +++ b/src/editfns.c
 @@ -199,7 +199,7 @@ DEFUN ("point-marker", Fpoint_marker, Spoint_marker, 0, 0, 0,
@@ -839,7 +801,7 @@ index e704d617869..ee8adf314f4 100644
  }
  
  DEFUN ("gap-position", Fgap_position, Sgap_position, 0, 0, 0,
-@@ -3050,8 +3050,8 @@ save_restriction_save_1 (void)
+@@ -3053,8 +3053,8 @@ save_restriction_save_1 (void)
      {
        Lisp_Object beg, end;
  
@@ -850,7 +812,7 @@ index e704d617869..ee8adf314f4 100644
  
        /* END must move forward if text is inserted at its exact location.  */
        XMARKER (end)->insertion_type = 1;
-@@ -3084,22 +3084,27 @@ save_restriction_restore_1 (Lisp_Object data)
+@@ -3087,22 +3087,27 @@ save_restriction_restore_1 (Lisp_Object data)
        struct Lisp_Marker *end = XMARKER (XCDR (data));
        eassert (buf == end->buffer);
  
@@ -885,7 +847,7 @@ index e704d617869..ee8adf314f4 100644
  
  	  buf->clip_changed = 1; /* Remember that the narrowing changed. */
  	}
-@@ -4431,7 +4436,7 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
+@@ -4475,7 +4480,7 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
  		   ptrdiff_t start1_byte, ptrdiff_t end1_byte,
  		   ptrdiff_t start2_byte, ptrdiff_t end2_byte)
  {
@@ -894,7 +856,7 @@ index e704d617869..ee8adf314f4 100644
  
    /* Update point as if it were a marker.  */
    if (PT < start1)
-@@ -4457,29 +4462,15 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
+@@ -4501,29 +4506,15 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
  
    /* The difference between the region's lengths */
    diff = (end2 - start2) - (end1 - start1);
@@ -926,7 +888,7 @@ index e704d617869..ee8adf314f4 100644
        if (mpos >= start1 && mpos < end2)
  	{
  	  if (mpos < end1)
-@@ -4489,9 +4480,8 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
+@@ -4533,9 +4524,8 @@ transpose_markers (ptrdiff_t start1, ptrdiff_t end1,
  	  else
  	    mpos -= amt2;
  	}
@@ -938,7 +900,7 @@ index e704d617869..ee8adf314f4 100644
  
  DEFUN ("transpose-regions", Ftranspose_regions, Stranspose_regions, 4, 5,
 diff --git a/src/emacs.c b/src/emacs.c
-index 5951c6c8c82..f42ce11f92b 100644
+index 4b4c9525652..d4fc8aee10c 100644
 --- a/src/emacs.c
 +++ b/src/emacs.c
 @@ -96,6 +96,7 @@ #define MAIN_PROGRAM
@@ -949,7 +911,7 @@ index 5951c6c8c82..f42ce11f92b 100644
  #include "window.h"
  #include "xwidget.h"
  #include "atimer.h"
-@@ -2317,6 +2318,7 @@ android_emacs_init (int argc, char **argv, char *dump_file)
+@@ -2320,6 +2321,7 @@ android_emacs_init (int argc, char **argv, char *dump_file)
        syms_of_eval ();
        syms_of_floatfns ();
  
@@ -958,20 +920,20 @@ index 5951c6c8c82..f42ce11f92b 100644
        syms_of_bytecode ();
        syms_of_callint ();
 diff --git a/src/fns.c b/src/fns.c
-index f4208d371ab..baa294f1e6e 100644
+index 580d10907ab..326be220fb6 100644
 --- a/src/fns.c
 +++ b/src/fns.c
-@@ -2930,7 +2930,8 @@ internal_equal_1 (Lisp_Object o1, Lisp_Object o2, enum equal_kind equal_kind,
- 	  {
+@@ -2966,7 +2966,8 @@ internal_equal_1 (Lisp_Object o1, Lisp_Object o2, enum equal_kind equal_kind,
+ 	  case PVEC_MARKER:
  	    return (XMARKER (o1)->buffer == XMARKER (o2)->buffer
  		    && (XMARKER (o1)->buffer == 0
 -			|| XMARKER (o1)->bytepos == XMARKER (o2)->bytepos));
 +			|| (marker_vector_charpos (XMARKER (o1))
 +			    == marker_vector_charpos (XMARKER (o2)))));
- 	  }
- 	if (BOOL_VECTOR_P (o1))
- 	  {
-@@ -3154,8 +3155,8 @@ value_cmp (Lisp_Object a, Lisp_Object b, int maxdepth)
+ 
+ 	  case PVEC_BOOL_VECTOR:
+ 	    {
+@@ -3216,8 +3217,8 @@ value_cmp (Lisp_Object a, Lisp_Object b, int maxdepth)
  		  int cmp = value_cmp (buf_a, buf_b, maxdepth - 1);
  		  if (cmp != 0)
  		    return cmp;
@@ -982,7 +944,7 @@ index f4208d371ab..baa294f1e6e 100644
  		  return pa < pb ? -1 : pa > pb;
  		}
  
-@@ -6041,8 +6042,9 @@ sxhash_obj (Lisp_Object obj, int depth)
+@@ -6216,8 +6217,9 @@ sxhash_obj (Lisp_Object obj, int depth)
  	  return sxhash_bignum (obj);
  	else if (pvec_type == PVEC_MARKER)
  	  {
@@ -994,7 +956,7 @@ index f4208d371ab..baa294f1e6e 100644
  	    EMACS_UINT hash;
  #ifdef HAVE_MPS
  	    if (XMARKER (obj)->buffer)
-@@ -6056,7 +6058,7 @@ sxhash_obj (Lisp_Object obj, int depth)
+@@ -6231,7 +6233,7 @@ sxhash_obj (Lisp_Object obj, int depth)
  #else
  	    hash = (intptr_t) XMARKER (obj)->buffer;
  #endif
@@ -1004,10 +966,10 @@ index f4208d371ab..baa294f1e6e 100644
  	  }
  	else if (pvec_type == PVEC_BOOL_VECTOR)
 diff --git a/src/igc.c b/src/igc.c
-index 20fd9f1f72e..0039f4d6cde 100644
+index 539677ee111..4ee38198291 100644
 --- a/src/igc.c
 +++ b/src/igc.c
-@@ -2266,39 +2266,31 @@ fix_vectorlike (mps_ss_t ss, struct Lisp_Vector *v)
+@@ -2734,39 +2734,31 @@ fix_vectorlike (mps_ss_t ss, struct Lisp_Vector *v)
    return MPS_RES_OK;
  }
  
@@ -1066,7 +1028,7 @@ index 20fd9f1f72e..0039f4d6cde 100644
        }
    }
    MPS_SCAN_END (ss);
-@@ -4862,8 +4854,8 @@ igc_valid_lisp_object_p (Lisp_Object obj)
+@@ -5468,8 +5460,8 @@ igc_valid_lisp_object_p (Lisp_Object obj)
    return 1;
  }
  
@@ -1077,7 +1039,7 @@ index 20fd9f1f72e..0039f4d6cde 100644
  {
    struct Lisp_Vector *v
      = alloc (header_size + len * word_size, IGC_OBJ_MARKER_VECTOR);
-@@ -4873,99 +4865,6 @@ alloc_marker_vector (ptrdiff_t len, Lisp_Object init)
+@@ -5479,99 +5471,6 @@ alloc_marker_vector (ptrdiff_t len, Lisp_Object init)
    return make_lisp_ptr (v, Lisp_Vectorlike);
  }
  
@@ -1177,7 +1139,7 @@ index 20fd9f1f72e..0039f4d6cde 100644
  static bool
  weak_vector_p (Lisp_Object x)
  {
-@@ -4989,7 +4888,7 @@ igc_resurrect_markers (struct buffer *b)
+@@ -5595,7 +5494,7 @@ igc_resurrect_markers (struct buffer *b)
      return;
    igc_assert (!weak_vector_p (old));
    size_t len = ASIZE (old);
@@ -1187,10 +1149,10 @@ index 20fd9f1f72e..0039f4d6cde 100644
  	  len * sizeof (Lisp_Object));
    BUF_MARKERS (b) = new;
 diff --git a/src/igc.h b/src/igc.h
-index 131613b5044..c30bb2ae6d7 100644
+index c556f5d4d7d..aca6bf311cb 100644
 --- a/src/igc.h
 +++ b/src/igc.h
-@@ -74,9 +74,6 @@ #define EMACS_IGC_H
+@@ -40,9 +40,6 @@ #define EMACS_IGC_H
  
  void igc_process_messages (void);
  Lisp_Object igc_make_cons (Lisp_Object car, Lisp_Object cdr);
@@ -1198,18 +1160,18 @@ index 131613b5044..c30bb2ae6d7 100644
 -void igc_remove_marker (struct buffer *b, struct Lisp_Marker *m);
 -void igc_remove_all_markers (struct buffer *b);
  void igc_resurrect_markers (struct buffer *b);
- Lisp_Object igc_alloc_symbol (void);
+ Lisp_Object igc_make_symbol (void);
  #ifdef HAVE_MODULES
-@@ -84,6 +81,7 @@ #define EMACS_IGC_H
- void igc_free_global_ref (struct module_global_reference *ref);
+@@ -50,6 +47,7 @@ #define EMACS_IGC_H
+ void igc_destroy_global_ref (struct module_global_reference *ref);
  #endif
  
 +Lisp_Object igc_alloc_marker_vector (ptrdiff_t len, Lisp_Object init);
- struct Lisp_Buffer_Local_Value *igc_alloc_blv (void);
+ struct Lisp_Buffer_Local_Value *igc_make_blv (void);
  void *igc_alloc_handler (void);
- void *igc_xzalloc_ambig (size_t size);
+ void *igc_xzalloc_ambig (size_t size, const char *label);
 diff --git a/src/indent.c b/src/indent.c
-index 95228b26825..19afdd158a0 100644
+index 8f0648743bd..3a8142d9529 100644
 --- a/src/indent.c
 +++ b/src/indent.c
 @@ -539,7 +539,7 @@ check_display_width (Lisp_Object window,
@@ -1241,7 +1203,7 @@ index 95228b26825..19afdd158a0 100644
  
    if (noninteractive)
 diff --git a/src/insdel.c b/src/insdel.c
-index 1031ad2140e..bcd88db6032 100644
+index 80fad87492b..b6062d8254f 100644
 --- a/src/insdel.c
 +++ b/src/insdel.c
 @@ -27,6 +27,8 @@
@@ -1447,10 +1409,10 @@ index 1031ad2140e..bcd88db6032 100644
  
  
 diff --git a/src/lisp.h b/src/lisp.h
-index 21f1b3eb3dc..ad25353f0b4 100644
+index d90faacf429..bc3467202f6 100644
 --- a/src/lisp.h
 +++ b/src/lisp.h
-@@ -1840,11 +1840,17 @@ ASIZE (Lisp_Object array)
+@@ -1815,11 +1815,17 @@ ASIZE (Lisp_Object array)
    return size;
  }
  
@@ -1469,7 +1431,7 @@ index 21f1b3eb3dc..ad25353f0b4 100644
  }
  
  INLINE ptrdiff_t
-@@ -3089,23 +3095,10 @@ knuth_hash (hash_hash_t hash, unsigned bits)
+@@ -3171,23 +3177,10 @@ knuth_hash (hash_hash_t hash, unsigned bits)
    /* The remaining fields are meaningless in a marker that
       does not point anywhere.  */
  
@@ -1497,7 +1459,7 @@ index 21f1b3eb3dc..ad25353f0b4 100644
  
  # ifdef HAVE_MPS
    /* If in a buffer's marker vector, this is the index where it is
-@@ -5354,16 +5347,13 @@ XMODULE_FUNCTION (Lisp_Object o)
+@@ -5536,16 +5529,13 @@ XMODULE_FUNCTION (Lisp_Object o)
  
  extern ptrdiff_t marker_position (Lisp_Object);
  extern ptrdiff_t marker_byte_position (Lisp_Object);
@@ -1518,10 +1480,10 @@ index 21f1b3eb3dc..ad25353f0b4 100644
  
  /* Defined in fileio.c.  */
 diff --git a/src/lread.c b/src/lread.c
-index 1df101e1720..a6402c00168 100644
+index 7b6abc48481..fb4beeaea88 100644
 --- a/src/lread.c
 +++ b/src/lread.c
-@@ -394,8 +394,8 @@ source_marker_get (source_t *src)
+@@ -393,8 +393,8 @@ source_marker_get (source_t *src)
  	c = BYTE8_TO_CHAR (c);
        bytepos++;
      }
@@ -1532,7 +1494,7 @@ index 1df101e1720..a6402c00168 100644
    return c;
  }
  
-@@ -403,11 +403,8 @@ source_marker_get (source_t *src)
+@@ -402,11 +402,8 @@ source_marker_get (source_t *src)
  source_marker_unget (source_t *src, int c)
  {
    Lisp_Object m = src->object;
@@ -2043,17 +2005,18 @@ index 00000000000..6a0ee8a9507
 +
 +#endif /* EMACS_MARKER_VECTOR_H */
 diff --git a/src/marker.c b/src/marker.c
-index 12d53ad12b8..b604d9f03d8 100644
+index 7761d84bdbe..e61a8f93021 100644
 --- a/src/marker.c
 +++ b/src/marker.c
-@@ -28,17 +28,10 @@
+@@ -28,17 +28,9 @@
  #include "lisp.h"
  #include "character.h"
  #include "buffer.h"
 +#include "text-index.h"
  #include "window.h"
  #include "igc.h"
- 
+-#include "pdumper.h"
+-
 -/* Record one cached position found recently by
 -   buf_charpos_to_bytepos or buf_bytepos_to_charpos.  */
 -
@@ -2061,11 +2024,10 @@ index 12d53ad12b8..b604d9f03d8 100644
 -static ptrdiff_t cached_bytepos;
 -static struct buffer *cached_buffer;
 -static modiff_count cached_modiff;
--
+ 
  /* Juanma Barranquero <lekktu@gmail.com> reported ~3x increased
     bootstrap time when byte_char_debug_check is enabled; so this
-    is never turned on by --enable-checking configure option.  */
-@@ -75,370 +68,17 @@ byte_char_debug_check (struct buffer *b, ptrdiff_t charpos, ptrdiff_t bytepos)
+@@ -76,370 +68,17 @@ byte_char_debug_check (struct buffer *b, ptrdiff_t charpos, ptrdiff_t bytepos)
  #define byte_char_debug_check(b, charpos, bytepos) do { } while (0)
  
  #endif /* MARKER_DEBUG */
@@ -2437,7 +2399,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  
  DEFUN ("marker-buffer", Fmarker_buffer, Smarker_buffer, 1, 1, 0,
         doc: /* Return the buffer that MARKER points into, or nil if none.
-@@ -466,7 +106,7 @@ DEFUN ("marker-position", Fmarker_position, Smarker_position, 1, 1, 0,
+@@ -467,7 +106,7 @@ DEFUN ("marker-position", Fmarker_position, Smarker_position, 1, 1, 0,
  {
    CHECK_MARKER (marker);
    if (XMARKER (marker)->buffer)
@@ -2446,7 +2408,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  
    return Qnil;
  }
-@@ -480,36 +120,23 @@ DEFUN ("marker-last-position", Fmarker_last_position, Smarker_last_position, 1,
+@@ -481,36 +120,23 @@ DEFUN ("marker-last-position", Fmarker_last_position, Smarker_last_position, 1,
  {
    CHECK_MARKER (marker);
  
@@ -2490,7 +2452,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  }
  
  /* If BUFFER is nil, return current buffer pointer.  Next, check
-@@ -548,13 +175,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+@@ -549,13 +175,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
    else if (MARKERP (position) && b == XMARKER (position)->buffer
  	   && b == m->buffer)
      {
@@ -2507,7 +2469,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  
        /* Do not use CHECK_FIXNUM_COERCE_MARKER because we
  	 don't want to call buf_charpos_to_bytepos if POSITION
-@@ -567,15 +194,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+@@ -568,15 +194,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
  	  if (cpos > PTRDIFF_MAX)
  	    cpos = PTRDIFF_MAX;
  	  charpos = cpos;
@@ -2525,7 +2487,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  	}
        else
  	wrong_type_argument (Qinteger_or_marker_p, position);
-@@ -583,18 +208,8 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+@@ -584,18 +208,8 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
        charpos = clip_to_bounds
  	(restricted ? BUF_BEGV (b) : BUF_BEG (b), charpos,
  	 restricted ? BUF_ZV (b) : BUF_Z (b));
@@ -2545,7 +2507,7 @@ index 12d53ad12b8..b604d9f03d8 100644
      }
  
  #ifdef HAVE_TEXT_CONVERSION
-@@ -648,7 +263,7 @@ set_marker_restricted (Lisp_Object marker, Lisp_Object position,
+@@ -649,7 +263,7 @@ set_marker_restricted (Lisp_Object marker, Lisp_Object position,
  
  Lisp_Object
  set_marker_both (Lisp_Object marker, Lisp_Object buffer,
@@ -2554,7 +2516,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  {
    register struct Lisp_Marker *m;
    register struct buffer *b = live_buffer (buffer);
-@@ -657,7 +272,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
+@@ -658,7 +272,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
    m = XMARKER (marker);
  
    if (b)
@@ -2563,7 +2525,7 @@ index 12d53ad12b8..b604d9f03d8 100644
    else
      unchain_marker (m);
    return marker;
-@@ -667,7 +282,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
+@@ -668,7 +282,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
  
  Lisp_Object
  set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
@@ -2572,7 +2534,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  {
    register struct Lisp_Marker *m;
    register struct buffer *b = live_buffer (buffer);
-@@ -677,10 +292,9 @@ set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
+@@ -678,10 +292,9 @@ set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
  
    if (b)
      {
@@ -2586,7 +2548,7 @@ index 12d53ad12b8..b604d9f03d8 100644
      }
    else
      unchain_marker (m);
-@@ -701,44 +315,12 @@ detach_marker (Lisp_Object marker)
+@@ -702,44 +315,12 @@ detach_marker (Lisp_Object marker)
     buffer NULL.  */
  
  void
@@ -2635,7 +2597,7 @@ index 12d53ad12b8..b604d9f03d8 100644
      }
  }
  
-@@ -753,9 +335,9 @@ marker_position (Lisp_Object marker)
+@@ -754,9 +335,9 @@ marker_position (Lisp_Object marker)
    if (!buf)
      error ("Marker does not point anywhere");
  
@@ -2648,7 +2610,7 @@ index 12d53ad12b8..b604d9f03d8 100644
  }
  
  /* Return the byte position of marker MARKER, as a C integer.  */
-@@ -769,9 +351,9 @@ marker_byte_position (Lisp_Object marker)
+@@ -770,9 +351,9 @@ marker_byte_position (Lisp_Object marker)
    if (!buf)
      error ("Marker does not point anywhere");
  
@@ -2661,11 +2623,61 @@ index 12d53ad12b8..b604d9f03d8 100644
  }
  
  DEFUN ("copy-marker", Fcopy_marker, Scopy_marker, 0, 2, 0,
+@@ -841,12 +422,12 @@ DEFUN ("markers-in", Fmarkers_in, Smarkers_in, 0, 2, 0,
+       iend = clip_to_bounds (BEGV, XFIXNUM (end), ZV);
+     }
+ 
+-  DO_MARKERS (current_buffer, tail)
++  FOR_EACH_MARKER (current_buffer, tail)
+     {
+-      if (ibeg <= tail->charpos && tail->charpos <= iend)
+-	res = Fcons (make_lisp_ptr (tail, Lisp_Vectorlike), res);
++      const ptrdiff_t charpos = marker_vector_charpos (tail);
++      if (ibeg <= charpos && charpos <= iend)
++        res = Fcons (make_lisp_ptr (tail, Lisp_Vectorlike), res);
+     }
+-  END_DO_MARKERS;
+ 
+   return res;
+ }
+@@ -859,9 +440,8 @@ DEFUN ("markers-in", Fmarkers_in, Smarkers_in, 0, 2, 0,
+ count_markers (struct buffer *buf)
+ {
+   int total = 0;
+-  struct Lisp_Marker *tail;
+ 
+-  for (tail = BUF_MARKERS (buf); tail; tail = tail->next)
++  FOR_EACH_MARKER (buf, tail)
+     total++;
+ 
+   return total;
+@@ -886,21 +466,9 @@ verify_bytepos (ptrdiff_t charpos)
+ }
+ 
+ #endif /* MARKER_DEBUG */
+-
+-#ifdef HAVE_MPS
+-static void
+-protect_cached_buffer (void)
+-{
+-  igc_root_create_exact_ptr (&cached_buffer);
+-}
+-#endif
+-
+ void
+ syms_of_marker (void)
+ {
+-#ifdef HAVE_MPS
+-  pdumper_do_now_and_after_load (protect_cached_buffer);
+-#endif
+   defsubr (&Smarker_position);
+   defsubr (&Smarker_last_position);
+   defsubr (&Smarker_buffer);
 diff --git a/src/pdumper.c b/src/pdumper.c
-index bb90549a4d9..cccaf32832f 100644
+index 84123cc74e3..8331b89ad13 100644
 --- a/src/pdumper.c
 +++ b/src/pdumper.c
-@@ -2239,14 +2239,7 @@ dump_marker (struct dump_context *ctx, const struct Lisp_Marker *marker)
+@@ -2247,14 +2247,7 @@ dump_marker (struct dump_context *ctx, const struct Lisp_Marker *marker)
      {
        dump_field_lv_rawptr (ctx, out, marker, &marker->buffer,
  			    Lisp_Vectorlike, WEIGHT_NORMAL);
@@ -2681,7 +2693,7 @@ index bb90549a4d9..cccaf32832f 100644
      }
    return finish_dump_pvec (ctx, &out->header);
  }
-@@ -2920,6 +2913,7 @@ dump_buffer (struct dump_context *ctx, const struct buffer *in_buffer)
+@@ -2997,6 +2990,7 @@ dump_buffer (struct dump_context *ctx, const struct buffer *in_buffer)
    buffer->clip_changed = 0;
    buffer->last_window_start = -1;
    buffer->point_before_scroll_ = Qnil;
@@ -2689,7 +2701,7 @@ index bb90549a4d9..cccaf32832f 100644
  
    dump_off base_offset = 0;
    if (buffer->base_buffer)
-@@ -2973,13 +2967,8 @@ dump_buffer (struct dump_context *ctx, const struct buffer *in_buffer)
+@@ -3050,13 +3044,8 @@ dump_buffer (struct dump_context *ctx, const struct buffer *in_buffer)
        DUMP_FIELD_COPY (out, buffer, own_text.overlay_unchanged_modified);
        if (buffer->own_text.intervals)
          dump_field_fixup_later (ctx, out, buffer, &buffer->own_text.intervals);
@@ -2704,7 +2716,7 @@ index bb90549a4d9..cccaf32832f 100644
        DUMP_FIELD_COPY (out, buffer, own_text.redisplay);
      }
 diff --git a/src/print.c b/src/print.c
-index 8ddec6a9b81..6f0297001d0 100644
+index 62359787960..9e2aabf8824 100644
 --- a/src/print.c
 +++ b/src/print.c
 @@ -222,7 +222,7 @@ print_finish (struct print_context *pc)
@@ -2717,10 +2729,10 @@ index 8ddec6a9b81..6f0297001d0 100644
      SET_PT_BOTH (pc->old_point
  		 + (pc->old_point >= pc->start_point
 diff --git a/src/process.c b/src/process.c
-index f5fbbb0e196..c9b4e055ece 100644
+index 5efcf0ba45f..e7f4be6fae3 100644
 --- a/src/process.c
 +++ b/src/process.c
-@@ -1287,8 +1287,7 @@ update_process_mark (struct Lisp_Process *p)
+@@ -1330,8 +1330,7 @@ update_process_mark (struct Lisp_Process *p)
    if (BUFFERP (buffer)
        && XMARKER (p->mark)->buffer != XBUFFER (buffer))
      set_marker_both (p->mark, buffer,
@@ -2730,7 +2742,7 @@ index f5fbbb0e196..c9b4e055ece 100644
  }
  
  DEFUN ("set-process-buffer", Fset_process_buffer, Sset_process_buffer,
-@@ -6391,9 +6390,9 @@ read_process_output_after_insert (struct Lisp_Process *p, Lisp_Object *old_read_
+@@ -6408,9 +6407,9 @@ read_process_output_after_insert (struct Lisp_Process *p, Lisp_Object *old_read_
       W3 is known to do that.  */
    if (BUFFERP (p->buffer)
        && (b = XBUFFER (p->buffer), b != current_buffer))
@@ -2742,7 +2754,7 @@ index f5fbbb0e196..c9b4e055ece 100644
  
    update_mode_lines = 23;
  
-@@ -8002,7 +8001,7 @@ DEFUN ("internal-default-process-sentinel", Finternal_default_process_sentinel,
+@@ -8046,7 +8045,7 @@ DEFUN ("internal-default-process-sentinel", Finternal_default_process_sentinel,
        insert_string (" ");
        Finsert (1, &msg);
        bset_read_only (current_buffer, tem);
@@ -3557,7 +3569,7 @@ index 00000000000..112802903ed
 +
 +#endif /* EMACS_TEXT_INDEX_H */
 diff --git a/src/textconv.c b/src/textconv.c
-index 105a8077072..45835defcdb 100644
+index 7a6dd4f05e6..85bfde1c317 100644
 --- a/src/textconv.c
 +++ b/src/textconv.c
 @@ -487,8 +487,7 @@ record_buffer_change (ptrdiff_t beg, ptrdiff_t end,
@@ -3604,7 +3616,7 @@ index 105a8077072..45835defcdb 100644
        f->conversion.field = Fcons (c1, Fcons (c2, window));
      }
 diff --git a/src/undo.c b/src/undo.c
-index 1a91aca01aa..aa05a9aee14 100644
+index 55245758b4d..315013e7e37 100644
 --- a/src/undo.c
 +++ b/src/undo.c
 @@ -128,9 +128,9 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
@@ -3628,7 +3640,7 @@ index 1a91aca01aa..aa05a9aee14 100644
  
  /* Record that a deletion is about to take place, of the characters in
 diff --git a/src/window.c b/src/window.c
-index 7a52ca7aa0a..32d6ba86580 100644
+index 07036ea6ecb..95e888e9729 100644
 --- a/src/window.c
 +++ b/src/window.c
 @@ -600,8 +600,7 @@ select_window_1 (Lisp_Object window, bool inhibit_point_swap)
@@ -3698,7 +3710,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
  	 n->contents);
  
        Vwindow_list = Qnil;
-@@ -6294,7 +6293,7 @@ window_scroll_for_long_lines (struct window *w, int n, bool noerror)
+@@ -6293,7 +6292,7 @@ window_scroll_for_long_lines (struct window *w, int n, bool noerror)
    if (pos.bufpos < ZV)
      {
        set_marker_restricted_both (w->start, w->contents,
@@ -3707,7 +3719,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
        w->start_at_line_beg = bolp;
        wset_update_mode_line (w);
        /* Set force_start so that redisplay_window will run
-@@ -6616,8 +6615,7 @@ window_scroll_pixel_based (Lisp_Object window, int n, bool whole, bool noerror)
+@@ -6615,8 +6614,7 @@ window_scroll_pixel_based (Lisp_Object window, int n, bool whole, bool noerror)
  	}
  
        /* Set the window start, and set up the window for redisplay.  */
@@ -3717,7 +3729,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
        bytepos = marker_byte_position (w->start);
        w->start_at_line_beg = (pos == BEGV || FETCH_BYTE (bytepos - 1) == '\n');
        wset_update_mode_line (w);
-@@ -6879,7 +6877,7 @@ window_scroll_line_based (Lisp_Object window, int n, bool whole, bool noerror)
+@@ -6878,7 +6876,7 @@ window_scroll_line_based (Lisp_Object window, int n, bool whole, bool noerror)
      {
        int this_scroll_margin = window_scroll_margin (w, MARGIN_IN_LINES);
  
@@ -3726,7 +3738,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
        w->start_at_line_beg = !NILP (bolp);
        wset_update_mode_line (w);
        /* Set force_start so that redisplay_window will run
-@@ -7032,8 +7030,8 @@ scroll_command (Lisp_Object window, Lisp_Object n, int direction)
+@@ -7031,8 +7029,8 @@ scroll_command (Lisp_Object window, Lisp_Object n, int direction)
  
    if (other_window)
      {
@@ -3737,7 +3749,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
      }
  
    unbind_to (count, Qnil);
-@@ -7453,7 +7451,7 @@ DEFUN ("recenter", Frecenter, Srecenter, 0, 2, "P\np",
+@@ -7452,7 +7450,7 @@ DEFUN ("recenter", Frecenter, Srecenter, 0, 2, "P\np",
      }
  
    /* Set the new window start.  */
@@ -3746,7 +3758,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
  
    /* The window start was calculated with an iterator already adjusted
       by the existing vscroll, so w->start must not be combined with
-@@ -7546,7 +7544,7 @@ DEFUN ("move-to-window-line", Fmove_to_window_line, Smove_to_window_line,
+@@ -7545,7 +7543,7 @@ DEFUN ("move-to-window-line", Fmove_to_window_line, Smove_to_window_line,
      {
        int height = window_internal_height (w);
        Fvertical_motion (make_fixnum (- (height / 2)), window, Qnil);
@@ -3755,7 +3767,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
        w->start_at_line_beg = !NILP (Fbolp ());
        w->force_start = true;
  
-@@ -7799,8 +7797,7 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
+@@ -7798,8 +7796,7 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
  	  w = XWINDOW (selected_window);
  	  set_marker_both (w->pointm,
  			   w->contents,
@@ -3799,7 +3811,7 @@ index 7a52ca7aa0a..32d6ba86580 100644
  	      w->start_at_line_beg = true;
  	      if (!MINI_WINDOW_P (w))
  		{
-@@ -8329,8 +8324,7 @@ save_window_save (Lisp_Object window, struct Lisp_Vector *vector, ptrdiff_t i)
+@@ -8359,8 +8354,7 @@ save_window_save (Lisp_Object window, struct Lisp_Vector *vector, ptrdiff_t i)
  	     the buffer; pointm is garbage in the selected window.  */
  	  if (EQ (window, selected_window))
  	    p->pointm = build_marker (XBUFFER (w->contents),
@@ -3810,10 +3822,10 @@ index 7a52ca7aa0a..32d6ba86580 100644
  	    p->pointm = Fcopy_marker (w->pointm, Qnil);
  	  p->old_pointm = Fcopy_marker (w->old_pointm, Qnil);
 diff --git a/src/xdisp.c b/src/xdisp.c
-index 7913af42812..c07d392aebe 100644
+index 8e47839e1cb..8c2707e4af3 100644
 --- a/src/xdisp.c
 +++ b/src/xdisp.c
-@@ -12047,8 +12047,8 @@ DEFUN ("buffer-text-pixel-size", Fbuffer_text_pixel_size, Sbuffer_text_pixel_siz
+@@ -12171,8 +12171,8 @@ DEFUN ("buffer-text-pixel-size", Fbuffer_text_pixel_size, Sbuffer_text_pixel_siz
    if (!EQ (buffer, w->contents))
      {
        wset_buffer (w, buffer);
@@ -3824,7 +3836,7 @@ index 7913af42812..c07d392aebe 100644
      }
  
    value = window_text_pixel_size (window, Qnil, Qnil, x_limit, y_limit, Qnil,
-@@ -12224,11 +12224,11 @@ message_dolog (const char *m, ptrdiff_t nbytes, bool nlflag, bool multibyte)
+@@ -12348,11 +12348,11 @@ message_dolog (const char *m, ptrdiff_t nbytes, bool nlflag, bool multibyte)
        bset_cache_long_scans (current_buffer, Qnil);
  
        oldpoint = message_dolog_marker1;
@@ -3839,7 +3851,7 @@ index 7913af42812..c07d392aebe 100644
  
        if (PT == Z)
  	point_at_end = 1;
-@@ -12802,8 +12802,8 @@ with_echo_area_buffer (struct window *w, int which,
+@@ -12972,8 +12972,8 @@ with_echo_area_buffer (struct window *w, int which,
    if (w)
      {
        wset_buffer (w, buffer);
@@ -3850,7 +3862,7 @@ index 7913af42812..c07d392aebe 100644
      }
  
    bset_undo_list (current_buffer, Qt);
-@@ -12891,14 +12891,11 @@ unwind_with_echo_area_buffer (Lisp_Object vector)
+@@ -13061,14 +13061,11 @@ unwind_with_echo_area_buffer (Lisp_Object vector)
  
        wset_buffer (w, buffer);
        set_marker_restricted_both (w->pointm, buffer,
@@ -3868,7 +3880,7 @@ index 7913af42812..c07d392aebe 100644
      }
  
    Vwith_echo_area_save_vector = vector;
-@@ -13133,8 +13130,7 @@ resize_mini_window (struct window *w, bool exact_p)
+@@ -13303,8 +13300,7 @@ resize_mini_window (struct window *w, bool exact_p)
    /* By default, start display at the beginning.  */
    if (redisplay_adhoc_scroll_in_resize_mini_windows)
      set_marker_both (w->start, w->contents,
@@ -3878,7 +3890,7 @@ index 7913af42812..c07d392aebe 100644
  
    /* Nil means don't try to resize.  */
    if ((NILP (Vresize_mini_windows)
-@@ -13789,7 +13785,7 @@ format_mode_line_unwind_data (struct frame *target_frame,
+@@ -13966,7 +13962,7 @@ format_mode_line_unwind_data (struct frame *target_frame,
  	 unwinding (Bug#32777).  */
        ASET (vector, 10, buffer);
        current_buffer = b;
@@ -3887,7 +3899,7 @@ index 7913af42812..c07d392aebe 100644
        current_buffer = cb;
      }
  
-@@ -20418,13 +20414,13 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
+@@ -20618,13 +20614,13 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
  	{
  	  new_pt = BEGV;
  	  new_pt_byte = BEGV_BYTE;
@@ -3903,7 +3915,7 @@ index 7913af42812..c07d392aebe 100644
  	}
  
        /* We don't use SET_PT so that the point-motion hooks don't run.  */
-@@ -20684,7 +20680,7 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
+@@ -20884,7 +20880,7 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
  			    MATRIX_ROW_START_BYTEPOS (row));
  
  	  if (w != XWINDOW (selected_window))
@@ -3912,7 +3924,7 @@ index 7913af42812..c07d392aebe 100644
  	  else if (current_buffer == old)
  	    SET_TEXT_POS (lpoint, PT, PT_BYTE);
  
-@@ -21053,7 +21049,7 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
+@@ -21253,7 +21249,7 @@ redisplay_window (Lisp_Object window, bool just_this_one_p)
    /* Set the window start position here explicitly, to avoid an
       infinite loop in case the functions in window-scroll-functions
       get errors.  */
@@ -3921,7 +3933,7 @@ index 7913af42812..c07d392aebe 100644
  
    /* Run scroll hooks.  */
    startp = run_window_scroll_functions (window, it.current.pos);
-@@ -21475,7 +21471,7 @@ try_window (Lisp_Object window, struct text_pos pos, int flags)
+@@ -21675,7 +21671,7 @@ try_window (Lisp_Object window, struct text_pos pos, int flags)
    int cursor_vpos = w->cursor.vpos;
  
    /* Make POS the new window start.  */
@@ -4032,5 +4044,5 @@ index 00000000000..b5cd4f7c8b8
 +		                (insert string)
 +		                (test-check-charpos (random (point-max))))))))
 -- 
-2.52.0.windows.1
+2.54.0.windows.1
 

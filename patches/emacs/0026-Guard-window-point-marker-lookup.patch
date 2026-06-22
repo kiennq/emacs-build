@@ -1,0 +1,42 @@
+From 34090b17ad48930d58c12dcc3a2d5a8199232703 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Mon, 22 Jun 2026 01:09:39 -0700
+Subject: [PATCH] Guard window point marker lookup
+
+* src/window.c (window_point): Return buffer point when a
+nonselected window's point marker is not attached to the
+window buffer.
+---
+ src/window.c | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/src/window.c b/src/window.c
+index 95e888e9729..2d59a597f14 100644
+--- a/src/window.c
++++ b/src/window.c
+@@ -1779,9 +1779,19 @@ DEFUN ("window-at", Fwindow_at, Swindow_at, 2, 3, 0,
+ ptrdiff_t
+ window_point (struct window *w)
+ {
+-  return (w == XWINDOW (selected_window)
+-          ? BUF_PT (XBUFFER (w->contents))
+-          : marker_vector_charpos (XMARKER (w->pointm)));
++  struct buffer *b = XBUFFER (w->contents);
++
++  if (w == XWINDOW (selected_window))
++    return BUF_PT (b);
++
++  if (!MARKERP (w->pointm))
++    return BUF_PT (b);
++
++  struct Lisp_Marker *m = XMARKER (w->pointm);
++  if (m->buffer != b)
++    return BUF_PT (b);
++
++  return marker_vector_charpos (m);
+ }
+ 
+ DEFUN ("window-point", Fwindow_point, Swindow_point, 0, 1, 0,
+-- 
+2.54.0.windows.1
+

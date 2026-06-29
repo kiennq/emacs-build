@@ -1,0 +1,41 @@
+From 345cb0d3fe30c1c1e6c0238a0fb0df90b597fce5 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 28 Jun 2026 18:31:18 -0700
+Subject: [PATCH] Fix dead-window marker resurrection
+
+The text-index marker-vector code stores positions of detached
+markers as negative marker entries.  When resurrecting a deleted
+window, use that saved detached-marker position instead of reading
+from the live buffer marker vector.
+
+* src/window.c (Fsplit_window_internal): Use
+marker_vector_last_charpos for resurrected dead-window markers.
+---
+ src/window.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/src/window.c b/src/window.c
+index 2d59a597f1..7e2d38b3da 100644
+--- a/src/window.c
++++ b/src/window.c
+@@ -5684,11 +5684,14 @@ set correctly.  See the code of `split-window' for how this is done.  */)
+       /* Get dead window back its old buffer and markers.  */
+       wset_buffer (n, n->old_buffer);
+       set_marker_restricted
+-	(n->start, make_fixnum (marker_vector_charpos (XMARKER (n->start))), n->contents);
++	(n->start, make_fixnum (marker_vector_last_charpos (XMARKER (n->start))),
++	 n->contents);
+       set_marker_restricted
+-	(n->pointm, make_fixnum (marker_vector_charpos (XMARKER (n->pointm))), n->contents);
++	(n->pointm, make_fixnum (marker_vector_last_charpos (XMARKER (n->pointm))),
++	 n->contents);
+       set_marker_restricted
+-	(n->old_pointm, make_fixnum (marker_vector_charpos (XMARKER (n->old_pointm))),
++	(n->old_pointm,
++	 make_fixnum (marker_vector_last_charpos (XMARKER (n->old_pointm))),
+ 	 n->contents);
+ 
+       Vwindow_list = Qnil;
+-- 
+2.54.0.windows.1
+

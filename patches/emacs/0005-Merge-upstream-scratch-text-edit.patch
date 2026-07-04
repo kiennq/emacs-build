@@ -1,8 +1,47 @@
-From 867f51ce944bbe09c115eef0c03ea424ac5bbb2b Mon Sep 17 00:00:00 2001
+From b2b635a72e71a112a9c4c25cfe0f1afaa9f5e6b2 Mon Sep 17 00:00:00 2001
 From: Kien Nguyen <kien.n.quang@gmail.com>
 Date: Wed, 3 Dec 2025 02:07:43 -0800
-Subject: [PATCH 05/24] Merge upstream/scratch/text-edit
+Subject: [PATCH] Merge upstream/scratch/text-edit
 
+---
+ .clang-format                |   2 +
+ src/Makefile.in              |   3 +-
+ src/alloc.c                  |  57 ++-
+ src/buffer.c                 | 126 ++----
+ src/buffer.h                 | 130 +-----
+ src/callint.c                |   4 +-
+ src/coding.c                 |  38 +-
+ src/composite.c              |   4 +-
+ src/dispextern.h             |   2 +-
+ src/editfns.c                |  52 +--
+ src/emacs.c                  |   2 +
+ src/fns.c                    |  14 +-
+ src/igc.c                    | 145 +------
+ src/igc.h                    |   4 +-
+ src/indent.c                 |   7 +-
+ src/insdel.c                 | 140 +------
+ src/lisp.h                   |  38 +-
+ src/lread.c                  |  11 +-
+ src/marker-vector.c          | 382 ++++++++++++++++++
+ src/marker-vector.h          | 106 +++++
+ src/marker.c                 | 526 +++---------------------
+ src/pdumper.c                |  15 +-
+ src/print.c                  |   2 +-
+ src/process.c                |   9 +-
+ src/text-index.c             | 760 +++++++++++++++++++++++++++++++++++
+ src/text-index.h             |  33 ++
+ src/textconv.c               |  14 +-
+ src/undo.c                   |   5 +-
+ src/window.c                 |  69 ++--
+ src/xdisp.c                  |  38 +-
+ test/src/marker-tests.el     |  13 +
+ test/src/text-index-tests.el |  95 +++++
+ 32 files changed, 1692 insertions(+), 1154 deletions(-)
+ create mode 100644 src/marker-vector.c
+ create mode 100644 src/marker-vector.h
+ create mode 100644 src/text-index.c
+ create mode 100644 src/text-index.h
+ create mode 100644 test/src/text-index-tests.el
 
 diff --git a/.clang-format b/.clang-format
 index 7929a7435f2..8fea915960f 100644
@@ -146,7 +185,7 @@ index e812f4abf1c..27fe50ef563 100644
  
  NO_INLINE /* For better stack traces */
 diff --git a/src/buffer.c b/src/buffer.c
-index ab070f6d5cd..e65fedd3100 100644
+index ab070f6d5cd..31b34fd3d64 100644
 --- a/src/buffer.c
 +++ b/src/buffer.c
 @@ -44,6 +44,7 @@ Copyright (C) 1985-2026 Free Software Foundation, Inc.
@@ -312,15 +351,16 @@ index ab070f6d5cd..e65fedd3100 100644
        set_buffer_intervals (b, NULL);
  
        /* Perhaps we should explicitly free the interval tree here...  */
-@@ -2198,6 +2168,7 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+@@ -2198,6 +2168,8 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
        free_region_cache (b->bidi_paragraph_cache);
        b->bidi_paragraph_cache = 0;
      }
 +  text_index_free (b->own_text.index);
++  b->own_text.index = NULL;
    bset_width_table (b, Qnil);
    unblock_input ();
  
-@@ -2679,7 +2650,7 @@ #define swapfield_(field, type) \
+@@ -2679,7 +2651,7 @@ #define swapfield_(field, type) \
    other_buffer->text->end_unchanged = other_buffer->text->gpt;
    swap_buffer_overlays (current_buffer, other_buffer);
    {
@@ -329,7 +369,7 @@ index ab070f6d5cd..e65fedd3100 100644
        {
  	if (m->buffer == other_buffer)
  	  m->buffer = current_buffer;
-@@ -2688,8 +2659,7 @@ #define swapfield_(field, type) \
+@@ -2688,8 +2660,7 @@ #define swapfield_(field, type) \
  	     BUF_MARKERS(buf) should either be for `buf' or dead.  */
  	  eassert (!m->buffer);
        }
@@ -339,7 +379,7 @@ index ab070f6d5cd..e65fedd3100 100644
        {
  	if (m->buffer == current_buffer)
  	  m->buffer = other_buffer;
-@@ -2698,8 +2668,8 @@ #define swapfield_(field, type) \
+@@ -2698,8 +2669,8 @@ #define swapfield_(field, type) \
  	     BUF_MARKERS(buf) should either be for `buf' or dead.  */
  	  eassert (!m->buffer);
        }
@@ -349,7 +389,7 @@ index ab070f6d5cd..e65fedd3100 100644
    { /* Some of the C code expects that both window markers of a
         live window points to that window's buffer.  So since we
         just swapped the markers between the two buffers, we need
-@@ -2761,9 +2731,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+@@ -2761,9 +2732,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
  current buffer is cleared.  */)
    (Lisp_Object flag)
  {
@@ -359,7 +399,7 @@ index ab070f6d5cd..e65fedd3100 100644
    Lisp_Object btail, other;
    ptrdiff_t begv, zv;
    bool narrowed = (BEG != BEGV || Z != ZV);
-@@ -2781,9 +2748,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+@@ -2781,9 +2749,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
       instead.  */
    bset_undo_list (current_buffer, Qt);
  
@@ -369,7 +409,7 @@ index ab070f6d5cd..e65fedd3100 100644
    if (NILP (flag))
      begv = BEGV_BYTE, zv = ZV_BYTE;
    else
-@@ -2812,11 +2776,11 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+@@ -2812,11 +2777,11 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
        GPT = GPT_BYTE;
        TEMP_SET_PT_BOTH (PT_BYTE, PT_BYTE);
  
@@ -384,7 +424,7 @@ index ab070f6d5cd..e65fedd3100 100644
  
        /* Convert multibyte form of 8-bit characters to unibyte.  */
        pos = BEG;
-@@ -2966,38 +2930,13 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+@@ -2966,38 +2931,13 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
  	TEMP_SET_PT_BOTH (position, byte);
        }
  
@@ -1203,7 +1243,7 @@ index 8f0648743bd..3a8142d9529 100644
  
    if (noninteractive)
 diff --git a/src/insdel.c b/src/insdel.c
-index 80fad87492b..b6062d8254f 100644
+index 80fad87492b..7236f489c8e 100644
 --- a/src/insdel.c
 +++ b/src/insdel.c
 @@ -27,6 +27,8 @@
@@ -1225,7 +1265,7 @@ index 80fad87492b..b6062d8254f 100644
 -	  && XMARKER (w->old_pointm)->charpos <= to)
 +      ptrdiff_t charpos;
 +      if (BUFFERP (w->contents) && XBUFFER (w->contents) == current_buffer
-+	  && (charpos = marker_vector_charpos (XMARKER (w->old_pointm)),
++	  && (charpos = marker_vector_last_charpos (XMARKER (w->old_pointm)),
 +	      charpos >= from && charpos <= to))
  	w->suspend_auto_hscroll = 0;
      }
@@ -1510,10 +1550,10 @@ index 7b6abc48481..fb4beeaea88 100644
  static int
 diff --git a/src/marker-vector.c b/src/marker-vector.c
 new file mode 100644
-index 00000000000..904b44be50d
+index 00000000000..7db1fd594bb
 --- /dev/null
 +++ b/src/marker-vector.c
-@@ -0,0 +1,378 @@
+@@ -0,0 +1,382 @@
 +/* Marker vectors.
 +   Copyright (C) 2025 Free Software Foundation, Inc.
 +
@@ -1825,13 +1865,17 @@ index 00000000000..904b44be50d
 +  return XFIXNUM (CHARPOS (v, m->entry));
 +}
 +
-+/* Return marker M's last character position.  */
++/* Return marker M's last character position.  This is its current
++   position if the marker is attached, or the saved position from its
++   negative entry if the marker is detached.  */
 +
 +ptrdiff_t
 +marker_vector_last_charpos (const struct Lisp_Marker *m)
 +{
-+  eassert (m->buffer == NULL);
-+  eassert (m->entry < 0);
++  if (m->buffer)
++    return marker_vector_charpos (m);
++
++  eassert (m->entry <= 0);
 +  return - m->entry;
 +}
 +
@@ -2005,7 +2049,7 @@ index 00000000000..6a0ee8a9507
 +
 +#endif /* EMACS_MARKER_VECTOR_H */
 diff --git a/src/marker.c b/src/marker.c
-index 7761d84bdbe..e61a8f93021 100644
+index 7761d84bdbe..5ce1f7a8977 100644
 --- a/src/marker.c
 +++ b/src/marker.c
 @@ -28,17 +28,9 @@
@@ -2408,7 +2452,7 @@ index 7761d84bdbe..e61a8f93021 100644
  
    return Qnil;
  }
-@@ -481,36 +120,23 @@ DEFUN ("marker-last-position", Fmarker_last_position, Smarker_last_position, 1,
+@@ -481,36 +120,32 @@ DEFUN ("marker-last-position", Fmarker_last_position, Smarker_last_position, 1,
  {
    CHECK_MARKER (marker);
  
@@ -2449,10 +2493,19 @@ index 7761d84bdbe..e61a8f93021 100644
 +
 +   eassert (m->buffer == b);
 +   marker_vector_set_charpos (m, charpos);
++}
++
++/* Detach M, preserving CHARPOS as its last known character position.  */
++
++static void
++detach_marker_at_charpos (struct Lisp_Marker *m, ptrdiff_t charpos)
++{
++  unchain_marker (m);
++  m->entry = - charpos;
  }
  
  /* If BUFFER is nil, return current buffer pointer.  Next, check
-@@ -549,13 +175,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+@@ -549,13 +184,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
    else if (MARKERP (position) && b == XMARKER (position)->buffer
  	   && b == m->buffer)
      {
@@ -2469,7 +2522,7 @@ index 7761d84bdbe..e61a8f93021 100644
  
        /* Do not use CHECK_FIXNUM_COERCE_MARKER because we
  	 don't want to call buf_charpos_to_bytepos if POSITION
-@@ -568,15 +194,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+@@ -568,15 +203,13 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
  	  if (cpos > PTRDIFF_MAX)
  	    cpos = PTRDIFF_MAX;
  	  charpos = cpos;
@@ -2487,7 +2540,7 @@ index 7761d84bdbe..e61a8f93021 100644
  	}
        else
  	wrong_type_argument (Qinteger_or_marker_p, position);
-@@ -584,18 +208,8 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
+@@ -584,18 +217,8 @@ set_marker_internal (Lisp_Object marker, Lisp_Object position,
        charpos = clip_to_bounds
  	(restricted ? BUF_BEGV (b) : BUF_BEG (b), charpos,
  	 restricted ? BUF_ZV (b) : BUF_Z (b));
@@ -2507,7 +2560,7 @@ index 7761d84bdbe..e61a8f93021 100644
      }
  
  #ifdef HAVE_TEXT_CONVERSION
-@@ -649,7 +263,7 @@ set_marker_restricted (Lisp_Object marker, Lisp_Object position,
+@@ -649,7 +272,7 @@ set_marker_restricted (Lisp_Object marker, Lisp_Object position,
  
  Lisp_Object
  set_marker_both (Lisp_Object marker, Lisp_Object buffer,
@@ -2516,16 +2569,19 @@ index 7761d84bdbe..e61a8f93021 100644
  {
    register struct Lisp_Marker *m;
    register struct buffer *b = live_buffer (buffer);
-@@ -658,7 +272,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
+@@ -658,9 +281,9 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
    m = XMARKER (marker);
  
    if (b)
 -    attach_marker (m, b, charpos, bytepos);
 +    attach_marker (m, b, charpos);
    else
-     unchain_marker (m);
+-    unchain_marker (m);
++    detach_marker_at_charpos (m, charpos);
    return marker;
-@@ -668,7 +282,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
+ }
+ 
+@@ -668,7 +291,7 @@ set_marker_both (Lisp_Object marker, Lisp_Object buffer,
  
  Lisp_Object
  set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
@@ -2534,7 +2590,7 @@ index 7761d84bdbe..e61a8f93021 100644
  {
    register struct Lisp_Marker *m;
    register struct buffer *b = live_buffer (buffer);
-@@ -678,10 +292,9 @@ set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
+@@ -678,13 +301,12 @@ set_marker_restricted_both (Lisp_Object marker, Lisp_Object buffer,
  
    if (b)
      {
@@ -2547,8 +2603,12 @@ index 7761d84bdbe..e61a8f93021 100644
 +				     charpos, BUF_ZV (b)));
      }
    else
-     unchain_marker (m);
-@@ -702,44 +315,12 @@ detach_marker (Lisp_Object marker)
+-    unchain_marker (m);
++    detach_marker_at_charpos (m, charpos);
+   return marker;
+ }
+ 
+@@ -702,44 +324,12 @@ detach_marker (Lisp_Object marker)
     buffer NULL.  */
  
  void
@@ -2597,7 +2657,7 @@ index 7761d84bdbe..e61a8f93021 100644
      }
  }
  
-@@ -754,9 +335,9 @@ marker_position (Lisp_Object marker)
+@@ -754,9 +344,9 @@ marker_position (Lisp_Object marker)
    if (!buf)
      error ("Marker does not point anywhere");
  
@@ -2610,7 +2670,7 @@ index 7761d84bdbe..e61a8f93021 100644
  }
  
  /* Return the byte position of marker MARKER, as a C integer.  */
-@@ -770,9 +351,9 @@ marker_byte_position (Lisp_Object marker)
+@@ -770,9 +360,9 @@ marker_byte_position (Lisp_Object marker)
    if (!buf)
      error ("Marker does not point anywhere");
  
@@ -2623,7 +2683,21 @@ index 7761d84bdbe..e61a8f93021 100644
  }
  
  DEFUN ("copy-marker", Fcopy_marker, Scopy_marker, 0, 2, 0,
-@@ -841,12 +422,12 @@ DEFUN ("markers-in", Fmarkers_in, Smarkers_in, 0, 2, 0,
+@@ -790,8 +380,11 @@ DEFUN ("copy-marker", Fcopy_marker, Scopy_marker, 0, 2, 0,
+   CHECK_TYPE (FIXNUMP (marker) || MARKERP (marker), Qinteger_or_marker_p, marker);
+ 
+   new = Fmake_marker ();
+-  Fset_marker (new, marker,
+-	       (MARKERP (marker) ? Fmarker_buffer (marker) : Qnil));
++  if (MARKERP (marker) && XMARKER (marker)->buffer == NULL)
++    XMARKER (new)->entry = XMARKER (marker)->entry;
++  else
++    Fset_marker (new, marker,
++		 (MARKERP (marker) ? Fmarker_buffer (marker) : Qnil));
+   XMARKER (new)->insertion_type = !NILP (type);
+   return new;
+ }
+@@ -841,12 +434,12 @@ DEFUN ("markers-in", Fmarkers_in, Smarkers_in, 0, 2, 0,
        iend = clip_to_bounds (BEGV, XFIXNUM (end), ZV);
      }
  
@@ -2640,7 +2714,7 @@ index 7761d84bdbe..e61a8f93021 100644
  
    return res;
  }
-@@ -859,9 +440,8 @@ DEFUN ("markers-in", Fmarkers_in, Smarkers_in, 0, 2, 0,
+@@ -859,9 +452,8 @@ DEFUN ("markers-in", Fmarkers_in, Smarkers_in, 0, 2, 0,
  count_markers (struct buffer *buf)
  {
    int total = 0;
@@ -2651,7 +2725,7 @@ index 7761d84bdbe..e61a8f93021 100644
      total++;
  
    return total;
-@@ -886,21 +466,9 @@ verify_bytepos (ptrdiff_t charpos)
+@@ -886,21 +478,9 @@ verify_bytepos (ptrdiff_t charpos)
  }
  
  #endif /* MARKER_DEBUG */
@@ -3640,7 +3714,7 @@ index 55245758b4d..315013e7e37 100644
  
  /* Record that a deletion is about to take place, of the characters in
 diff --git a/src/window.c b/src/window.c
-index 07036ea6ecb..95e888e9729 100644
+index 07036ea6ecb..adffbb161a9 100644
 --- a/src/window.c
 +++ b/src/window.c
 @@ -600,8 +600,7 @@ select_window_1 (Lisp_Object window, bool inhibit_point_swap)
@@ -3653,16 +3727,24 @@ index 07036ea6ecb..95e888e9729 100644
      }
  
    selected_window = window;
-@@ -1782,7 +1781,7 @@ window_point (struct window *w)
+@@ -1780,9 +1779,13 @@ DEFUN ("window-at", Fwindow_at, Swindow_at, 2, 3, 0,
+ ptrdiff_t
+ window_point (struct window *w)
  {
-   return (w == XWINDOW (selected_window)
-           ? BUF_PT (XBUFFER (w->contents))
+-  return (w == XWINDOW (selected_window)
+-          ? BUF_PT (XBUFFER (w->contents))
 -          : XMARKER (w->pointm)->charpos);
-+          : marker_vector_charpos (XMARKER (w->pointm)));
++  if (w == XWINDOW (selected_window))
++    return BUF_PT (XBUFFER (w->contents));
++
++  struct Lisp_Marker *m = XMARKER (w->pointm);
++  return (m->buffer
++	  ? marker_vector_charpos (m)
++	  : marker_vector_last_charpos (m));
  }
  
  DEFUN ("window-point", Fwindow_point, Swindow_point, 0, 1, 0,
-@@ -3708,7 +3707,7 @@ DEFUN ("delete-other-windows-internal", Fdelete_other_windows_internal,
+@@ -3708,7 +3711,7 @@ DEFUN ("delete-other-windows-internal", Fdelete_other_windows_internal,
  	     can have unwanted side effects due to text properties.  */
  	  pos = *vmotion (startpos, startbyte, -top, w);
  
@@ -3671,7 +3753,7 @@ index 07036ea6ecb..95e888e9729 100644
  	  w->window_end_valid = false;
  	  w->start_at_line_beg = (pos.bytepos == BEGV_BYTE
  				    || FETCH_BYTE (pos.bytepos - 1) == '\n');
-@@ -4387,8 +4386,8 @@ set_window_buffer (Lisp_Object window, Lisp_Object buffer,
+@@ -4387,8 +4390,8 @@ set_window_buffer (Lisp_Object window, Lisp_Object buffer,
        w->hscroll = w->min_hscroll = w->hscroll_whole = 0;
        w->suspend_auto_hscroll = false;
        w->vscroll = 0;
@@ -3682,7 +3764,7 @@ index 07036ea6ecb..95e888e9729 100644
        set_marker_restricted (w->start,
  			     make_fixnum (b->last_window_start),
  			     buffer);
-@@ -4574,9 +4573,9 @@ temp_output_buffer_show (register Lisp_Object buf)
+@@ -4574,9 +4577,9 @@ temp_output_buffer_show (register Lisp_Object buf)
        w = XWINDOW (window);
        w->hscroll = w->min_hscroll = w->hscroll_whole = 0;
        w->suspend_auto_hscroll = false;
@@ -3695,22 +3777,25 @@ index 07036ea6ecb..95e888e9729 100644
  
        /* Run temp-buffer-show-hook, with the chosen window selected
  	 and its buffer current.  */
-@@ -5675,11 +5674,11 @@ DEFUN ("split-window-internal", Fsplit_window_internal, Ssplit_window_internal,
+@@ -5675,11 +5678,14 @@ DEFUN ("split-window-internal", Fsplit_window_internal, Ssplit_window_internal,
        /* Get dead window back its old buffer and markers.  */
        wset_buffer (n, n->old_buffer);
        set_marker_restricted
 -	(n->start, make_fixnum (XMARKER (n->start)->charpos), n->contents);
-+	(n->start, make_fixnum (marker_vector_charpos (XMARKER (n->start))), n->contents);
++	(n->start, make_fixnum (marker_vector_last_charpos (XMARKER (n->start))),
++	 n->contents);
        set_marker_restricted
 -	(n->pointm, make_fixnum (XMARKER (n->pointm)->charpos), n->contents);
-+	(n->pointm, make_fixnum (marker_vector_charpos (XMARKER (n->pointm))), n->contents);
++	(n->pointm, make_fixnum (marker_vector_last_charpos (XMARKER (n->pointm))),
++	 n->contents);
        set_marker_restricted
 -	(n->old_pointm, make_fixnum (XMARKER (n->old_pointm)->charpos),
-+	(n->old_pointm, make_fixnum (marker_vector_charpos (XMARKER (n->old_pointm))),
++	(n->old_pointm,
++	 make_fixnum (marker_vector_last_charpos (XMARKER (n->old_pointm))),
  	 n->contents);
  
        Vwindow_list = Qnil;
-@@ -6293,7 +6292,7 @@ window_scroll_for_long_lines (struct window *w, int n, bool noerror)
+@@ -6293,7 +6299,7 @@ window_scroll_for_long_lines (struct window *w, int n, bool noerror)
    if (pos.bufpos < ZV)
      {
        set_marker_restricted_both (w->start, w->contents,
@@ -3719,7 +3804,7 @@ index 07036ea6ecb..95e888e9729 100644
        w->start_at_line_beg = bolp;
        wset_update_mode_line (w);
        /* Set force_start so that redisplay_window will run
-@@ -6615,8 +6614,7 @@ window_scroll_pixel_based (Lisp_Object window, int n, bool whole, bool noerror)
+@@ -6615,8 +6621,7 @@ window_scroll_pixel_based (Lisp_Object window, int n, bool whole, bool noerror)
  	}
  
        /* Set the window start, and set up the window for redisplay.  */
@@ -3729,7 +3814,7 @@ index 07036ea6ecb..95e888e9729 100644
        bytepos = marker_byte_position (w->start);
        w->start_at_line_beg = (pos == BEGV || FETCH_BYTE (bytepos - 1) == '\n');
        wset_update_mode_line (w);
-@@ -6878,7 +6876,7 @@ window_scroll_line_based (Lisp_Object window, int n, bool whole, bool noerror)
+@@ -6878,7 +6883,7 @@ window_scroll_line_based (Lisp_Object window, int n, bool whole, bool noerror)
      {
        int this_scroll_margin = window_scroll_margin (w, MARGIN_IN_LINES);
  
@@ -3738,7 +3823,7 @@ index 07036ea6ecb..95e888e9729 100644
        w->start_at_line_beg = !NILP (bolp);
        wset_update_mode_line (w);
        /* Set force_start so that redisplay_window will run
-@@ -7031,8 +7029,8 @@ scroll_command (Lisp_Object window, Lisp_Object n, int direction)
+@@ -7031,8 +7036,8 @@ scroll_command (Lisp_Object window, Lisp_Object n, int direction)
  
    if (other_window)
      {
@@ -3749,7 +3834,7 @@ index 07036ea6ecb..95e888e9729 100644
      }
  
    unbind_to (count, Qnil);
-@@ -7452,7 +7450,7 @@ DEFUN ("recenter", Frecenter, Srecenter, 0, 2, "P\np",
+@@ -7452,7 +7457,7 @@ DEFUN ("recenter", Frecenter, Srecenter, 0, 2, "P\np",
      }
  
    /* Set the new window start.  */
@@ -3758,7 +3843,7 @@ index 07036ea6ecb..95e888e9729 100644
  
    /* The window start was calculated with an iterator already adjusted
       by the existing vscroll, so w->start must not be combined with
-@@ -7545,7 +7543,7 @@ DEFUN ("move-to-window-line", Fmove_to_window_line, Smove_to_window_line,
+@@ -7545,7 +7550,7 @@ DEFUN ("move-to-window-line", Fmove_to_window_line, Smove_to_window_line,
      {
        int height = window_internal_height (w);
        Fvertical_motion (make_fixnum (- (height / 2)), window, Qnil);
@@ -3767,7 +3852,7 @@ index 07036ea6ecb..95e888e9729 100644
        w->start_at_line_beg = !NILP (Fbolp ());
        w->force_start = true;
  
-@@ -7798,8 +7796,7 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
+@@ -7798,8 +7803,7 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
  	  w = XWINDOW (selected_window);
  	  set_marker_both (w->pointm,
  			   w->contents,
@@ -3777,7 +3862,7 @@ index 07036ea6ecb..95e888e9729 100644
  	}
  
        fset_redisplay (f);
-@@ -7937,17 +7934,15 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
+@@ -7937,17 +7941,15 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
  	    {
  	      /* Set window markers at start of visible range.  */
  	      if (XMARKER (w->start)->buffer == 0)
@@ -3798,7 +3883,7 @@ index 07036ea6ecb..95e888e9729 100644
  	      w->start_at_line_beg = true;
  	      if (FUNCTIONP (window_restore_killed_buffer_windows)
  		  && !MINI_WINDOW_P (w))
-@@ -7968,9 +7963,9 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
+@@ -7968,9 +7970,9 @@ DEFUN ("set-window-configuration", Fset_window_configuration,
  	      window_discard_buffer_from_window (w->contents, window, false);
  	      /* This will set the markers to beginning of visible
  		 range.  */
@@ -3811,7 +3896,7 @@ index 07036ea6ecb..95e888e9729 100644
  	      w->start_at_line_beg = true;
  	      if (!MINI_WINDOW_P (w))
  		{
-@@ -8359,8 +8354,7 @@ save_window_save (Lisp_Object window, struct Lisp_Vector *vector, ptrdiff_t i)
+@@ -8359,8 +8361,7 @@ save_window_save (Lisp_Object window, struct Lisp_Vector *vector, ptrdiff_t i)
  	     the buffer; pointm is garbage in the selected window.  */
  	  if (EQ (window, selected_window))
  	    p->pointm = build_marker (XBUFFER (w->contents),
@@ -3942,6 +4027,30 @@ index 8e47839e1cb..8c2707e4af3 100644
  
    /* Mark cursor position as unknown.  No overlay arrow seen.  */
    w->cursor.vpos = -1;
+diff --git a/test/src/marker-tests.el b/test/src/marker-tests.el
+index f083ece41e1..37ad1b15d3d 100644
+--- a/test/src/marker-tests.el
++++ b/test/src/marker-tests.el
+@@ -57,6 +57,19 @@ marker-goto-char-from-other-buffer
+     (set-marker marker-2 marker-1)
+     (should (goto-char marker-2))))
+ 
++(ert-deftest marker-last-position-live-and-detached ()
++  "`marker-last-position' handles live and detached markers."
++  (let (marker)
++    (with-temp-buffer
++      (insert "abcdef")
++      (setq marker (copy-marker 4))
++      (should (= (marker-last-position marker) 4)))
++    (should-not (marker-buffer marker))
++    (should (= (marker-last-position marker) 4))
++    (let ((copy (copy-marker marker)))
++      (should-not (marker-buffer copy))
++      (should (= (marker-last-position copy) 4)))))
++
+ (ert-deftest marker-markers-in ()
+   (with-temp-buffer
+     (insert "hello ")
 diff --git a/test/src/text-index-tests.el b/test/src/text-index-tests.el
 new file mode 100644
 index 00000000000..b5cd4f7c8b8
@@ -4031,7 +4140,7 @@ index 00000000000..b5cd4f7c8b8
 +                      (should (test-check-charpos (random (point-max))))))))
 +
 +(defvar text-index-test-strings
-+  ["1" "💡" "💡3" "💡💡" "💡💡5"])
++  ["1" "??" "??3" "????" "????5"])
 +
 +(ert-deftest text-index-test-random-insert ()
 +  (cl-loop for file in text-index-all-test-files do
@@ -4044,5 +4153,5 @@ index 00000000000..b5cd4f7c8b8
 +		                (insert string)
 +		                (test-check-charpos (random (point-max))))))))
 -- 
-2.54.0.windows.1
+2.55.0.windows.1
 

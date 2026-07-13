@@ -1,0 +1,62 @@
+From d1d626a593d58a2c99dcc5f2a2d3057cec40aa3e Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 12 Jul 2026 21:02:35 -0700
+Subject: [PATCH] Fix W32 VT child-frame face lookup
+
+Resolve glyph faces against the frame that owns each face ID while
+retaining the output frame for TTY state.  This prevents indexing a
+parent frame's face cache with a child-frame face ID.
+
+* src/w32console.c (w32con_write_glyphs): Resolve the VT face
+using attr_frame.
+(w32con_write_glyphs_with_face): Resolve the face before calling
+turn_on_face.
+(turn_on_face): Accept the resolved face.
+---
+ src/w32console.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/src/w32console.c b/src/w32console.c
+index 9aaa011d9a4..563d217a30d 100644
+--- a/src/w32console.c
++++ b/src/w32console.c
+@@ -57,7 +57,7 @@
+ static void w32con_update_end (struct frame * f);
+ static WORD w32_face_attributes (struct frame *f, int face_id);
+ static int  w32con_write_vt_seq (const char *);
+-static void turn_on_face (struct frame *, int face_id);
++static void turn_on_face (struct frame *, struct face *);
+ static void turn_off_face (struct frame *, int face_id);
+ static COORD w32con_get_cursor_coords (void);
+ 
+@@ -423,7 +423,7 @@ w32con_write_glyphs (struct frame *f, register struct glyph *string,
+ 	{
+ 	  if (w32_use_virtual_terminal)
+ 	    {
+-	      turn_on_face (f, face_id);
++	      turn_on_face (f, FACE_FROM_ID (attr_frame, face_id));
+ 	      WriteConsole (cur_screen, conversion_buffer,
+ 			    coding->produced, &r, NULL);
+ 	      turn_off_face (f, face_id);
+@@ -497,7 +497,7 @@ w32con_write_glyphs_with_face (struct frame *f, register int x, register int y,
+ 	{
+ 	  COORD saved_coords = cursor_coords;
+ 	  w32con_move_cursor(f, y, x);
+-	  turn_on_face (f, face_id);
++	  turn_on_face (f, FACE_FROM_ID (f, face_id));
+ 	  WriteConsole (cur_screen, conversion_buffer,
+ 			coding->produced, &written, NULL);
+ 	  turn_off_face (f, face_id);
+@@ -861,9 +861,8 @@ w32_face_attributes (struct frame *f, int face_id)
+ }
+ 
+ static void
+-turn_on_face (struct frame *f, int face_id)
++turn_on_face (struct frame *f, struct face *face)
+ {
+-  struct face *face = FACE_FROM_ID (f, face_id);
+   struct tty_display_info *tty = FRAME_TTY (f);
+   unsigned long fg = face->foreground;
+   unsigned long bg = face->background;
+-- 
+2.55.0.windows.2

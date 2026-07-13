@@ -1,0 +1,48 @@
+From 2c5b1597e6e6b856abbe2af61e4237f1807301fb Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 12 Jul 2026 22:03:38 -0700
+Subject: [PATCH] Fix clean info directory generation
+
+Derive misc manual inputs from their actual source lists so manuals
+whose tracked source is Org do not become dependencies on generated
+Texinfo files.  Preserve the translated manual source paths.
+
+* Makefile.in (srcdir_doc_info_dir_inputs): Use the per-language
+misc source lists instead of reconstructing .texi names.
+(Bug#81332)
+---
+ Makefile.in | 17 ++++++-----------
+ 1 file changed, 6 insertions(+), 11 deletions(-)
+
+diff --git a/Makefile.in b/Makefile.in
+index e4ce5184d25..38464e94958 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -1191,19 +1191,14 @@ define set_texi_misc
+ 
+ $(foreach lang,$(DOCLANGS),$(eval $(call set_texi_misc,$(lang))))
+ 
+-srcdir_doc_info_dir_inputs := \
++srcdir_doc_info_dir_inputs = \
+   ${srcdir}/doc/emacs/emacs.texi \
+   ${srcdir}/doc/lispintro/emacs-lisp-intro.texi \
+-  ${srcdir}/doc/lispref/elisp.texi
+-TRANSLATED_DIRS:=misc
+-# $(1) = dir
+-# $(2) = lang
+-define GET_DOC_SRC
+--include ${srcdir}/doc/translations/$(2)/$(1)/info_common.mk
+-INFO_COMMON:=$$(subst ccmode,cc-mode,$$(INFO_COMMON))
+-srcdir_doc_info_dir_inputs:=$$(srcdir_doc_info_dir_inputs) $$(patsubst ${srcdir}/doc/translations/default/$(1)/%-default.texi,${srcdir}/doc/$(1)/%.texi,$$(patsubst %,${srcdir}/doc/translations/$(2)/$(1)/%-$(2).texi,$$(INFO_COMMON)))
+-endef
+-$(foreach dir,$(TRANSLATED_DIRS),$(foreach lang,$(DOCLANGS),$(eval $(call GET_DOC_SRC,$(dir),$(lang)))))
++  ${srcdir}/doc/lispref/elisp.texi \
++  $(foreach lang,$(DOCLANGS), \
++    $(addprefix ${srcdir}/doc/misc/$(filter-out \
++      ../translations/default/misc/,../translations/$(lang)/misc/), \
++      $(texi_misc_$(lang))))
+ 
+ info_dir_inputs = \
+   ../build-aux/dir_top \
+-- 
+2.55.0.windows.2

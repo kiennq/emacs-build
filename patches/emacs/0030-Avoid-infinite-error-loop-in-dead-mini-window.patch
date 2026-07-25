@@ -1,0 +1,49 @@
+From b558c3ff6f0da786eb4b1e5ad767a8298c8b5546 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sat, 25 Jul 2026 15:26:43 -0700
+Subject: [PATCH] Avoid infinite error loop displaying in a dead mini-window
+
+If the mini-window of the selected frame was deleted, but the frame
+still refers to it, displaying an echo-area message called
+marker_position on the dead window's detached markers, which signaled
+an error.  Reporting that error needs the echo area as well, so Emacs
+looped forever, discarding input on each iteration.
+
+* src/xdisp.c (echo_area_display): Do nothing if the mini-window is
+not live.
+(resize_echo_area_exactly): Check that echo_area_window is live.
+---
+ src/xdisp.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/xdisp.c b/src/xdisp.c
+index 8f1d7bba60a6..3c824ecf73fa 100644
+--- a/src/xdisp.c
++++ b/src/xdisp.c
+@@ -13244,7 +13244,9 @@ display_echo_area_1 (void *a1, Lisp_Object a2)
+ resize_echo_area_exactly (void)
+ {
+   if (BUFFERP (echo_area_buffer[0])
+-      && WINDOWP (echo_area_window))
++      /* The window recorded in echo_area_window could have been deleted
++	 since it was recorded there.  */
++      && WINDOW_LIVE_P (echo_area_window))
+     {
+       struct window *w = XWINDOW (echo_area_window);
+       Lisp_Object resize_exactly = (minibuf_level == 0 ? Qt : Qnil);
+@@ -13734,7 +13736,11 @@ echo_area_display (bool update_frame_p)
+   struct frame *sf = SELECTED_FRAME ();
+ 
+   mini_window = FRAME_MINIBUF_WINDOW (sf);
+-  if (NILP (mini_window))
++  /* The mini-window can be dead, e.g. if a window configuration whose
++     restoration deleted it was never restored.  Displaying in it would
++     signal an error from marker_position below, and since displaying
++     that error needs the echo area as well, Emacs would loop forever.  */
++  if (!WINDOW_LIVE_P (mini_window))
+     return;
+ 
+   w = XWINDOW (mini_window);
+-- 
+2.55.0.windows.3
+

@@ -1,0 +1,76 @@
+From 4e463e79ab64f88c784a51dd030552d777180ec9 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 31 Jul 2026 15:04:28 -0700
+Subject: [PATCH] Honor SPEC-TYPE in use-package :custom-face
+
+---
+ lisp/use-package/use-package-core.el       |  5 ++++-
+ test/lisp/use-package/use-package-tests.el | 18 ++++++++----------
+ 2 files changed, 12 insertions(+), 11 deletions(-)
+
+diff --git a/lisp/use-package/use-package-core.el b/lisp/use-package/use-package-core.el
+index 75ac7ada8a7c..7306e6e2d711 100644
+--- a/lisp/use-package/use-package-core.el
++++ b/lisp/use-package/use-package-core.el
+@@ -1625,7 +1625,10 @@ use-package-handler/:custom-face
+   (use-package-concat
+    (mapcar #'(lambda (def)
+                `(progn
+-                  (apply #'face-spec-set (append (backquote ,def) '(face-defface-spec)))
++                  (apply #'face-spec-set
++                         (backquote
++                          ,`(,@def ,@(unless (cddr def)
++                                      '(face-defface-spec)))))
+                   (put ',(car def) 'face-modified t)))
+            args)
+    (use-package-process-keywords name rest state)))
+diff --git a/test/lisp/use-package/use-package-tests.el b/test/lisp/use-package/use-package-tests.el
+index 57ab98e012bf..88f7046e9cf2 100644
+--- a/test/lisp/use-package/use-package-tests.el
++++ b/test/lisp/use-package/use-package-tests.el
+@@ -1155,9 +1155,8 @@ use-package-test/:custom-face-1
+    `(progn
+       (progn
+         (apply #'face-spec-set
+-               (append (backquote (foo ((t (:background "#e4edfc")))))
+-                       '(face-defface-spec))
+-               )
++               (backquote (foo ((t (:background "#e4edfc")))
++                               face-defface-spec)))
+         (put 'foo 'face-modified t))
+       (require 'foo nil nil))))
+ 
+@@ -1170,24 +1169,23 @@ use-package-test/:custom-face-2
+    `(progn
+       (progn
+         (apply #'face-spec-set
+-               (append (backquote (example-1-face ((t (:foreground "LightPink")))))
+-                       '(face-defface-spec)))
++               (backquote (example-1-face ((t (:foreground "LightPink")))
++                                              face-defface-spec)))
+         (put 'example-1-face 'face-modified t))
+       (progn
+         (apply #'face-spec-set
+-               (append (backquote (example-2-face ((t (:foreground "LightGreen")))))
+-                       '(face-defface-spec)))
++               (backquote (example-2-face ((t (:foreground "LightGreen")))
++                                              face-defface-spec)))
+         (put 'example-2-face 'face-modified t))
+       (require 'example nil nil))))
+ 
+ (ert-deftest use-package-test/:custom-face-3 ()
+   (match-expansion
+-   (use-package foo :custom-face (foo ((t (:background "#e4edfc"))) face-defspec-spec))
++   (use-package foo :custom-face (foo ((t (:background "#e4edfc"))) face-override-spec))
+    `(progn
+       (progn
+         (apply #'face-spec-set
+-               (append (backquote (foo ((t (:background "#e4edfc"))) face-defspec-spec))
+-                       '(face-defface-spec)))
++               (backquote (foo ((t (:background "#e4edfc"))) face-override-spec)))
+         (put 'foo 'face-modified t))
+       (require 'foo nil nil))))
+ 
+-- 
+2.55.0.windows.3
+

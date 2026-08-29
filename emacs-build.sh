@@ -88,7 +88,7 @@ function check_mingw_architecture ()
 function ensure_mingw_build_software ()
 {
     echo Install essential packages
-    local build_packages="git zip unzip base-devel ${mingw_prefix}-toolchain autoconf automake"
+    local build_packages="git zip unzip base-devel ${mingw_prefix}-toolchain autoconf automake texinfo"
     pacman --noprogressbar --noconfirm --needed -S $build_packages
     if test "$?" != 0; then
         echo Unable to install $build_packages

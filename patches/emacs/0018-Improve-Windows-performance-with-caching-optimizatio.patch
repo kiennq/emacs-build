@@ -26,8 +26,8 @@ Phase 1 - Display optimizations:
 * src/w32term.c (w32_get_pen): New pen cache, ring buffer of 8 entries
 keyed on (style, thickness, color).  Used by w32_draw_underwave and
 w32_draw_rectangle.
-(w32_draw_image_foreground): Cache CompatibleDC and mask DC as statics.
-(w32_draw_image_foreground, w32_draw_image_foreground_1)
+(w32_draw_image_foreground): Reformat image drawing code.
+(w32_draw_image_foreground_1)
 (w32_draw_image_glyph_string, w32_draw_hollow_cursor): Replace uncached
 CreateSolidBrush/DeleteObject with w32_get_brush.
 (w32_set_glyph_string_clipping): Reuse two static clip HRGNs via
@@ -25007,7 +25007,7 @@ index 0a2f18cfa49..0602ee6bc79 100644
  			      s->img->mask, s->slice.x, s->slice.y))
  		DebPrint (("PlgBlt failed!"));
  	    }
-@@ -2077,22 +2227,25 @@ w32_draw_image_foreground (struct glyph_string *s)
+@@ -2077,22 +2227,26 @@ w32_draw_image_foreground (struct glyph_string *s)
  		 scaling to a larger size, but Windows 9X doesn't
  		 support HALFTONE.  */
  	      if (os_subtype == OS_SUBTYPE_NT
@@ -25040,7 +25040,7 @@ index 0a2f18cfa49..0602ee6bc79 100644
  		SetStretchBltMode (s->hdc, pmode);
  	    }
  	  SelectObject (mask_dc, mask_orig_obj);
--	  DeleteDC (mask_dc);
+ 	  DeleteDC (mask_dc);
  	}
        else
  	{
@@ -31157,4 +31157,3 @@ index 00000000000..e6931bb8332
 +;;; w32-perf-bench.el ends here
 -- 
 2.54.0.windows.1
-

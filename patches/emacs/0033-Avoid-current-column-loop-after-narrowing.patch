@@ -1,0 +1,71 @@
+From 3707f8b60942551a41bacf4794a89cbb8f7aa046 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 10 Sep 2026 08:56:41 -0700
+Subject: [PATCH] Avoid current-column loop after narrowing
+
+* src/indent.c (scan_for_column): Stop if invisible-text scanning
+cannot advance after Lisp narrows the buffer.
+* test/src/indent-tests.el
+(indent-tests-current-column-after-narrowing): Add a regression test.
+---
+ src/indent.c             |  5 +++++
+ test/src/indent-tests.el | 22 ++++++++++++++++++++++
+ 2 files changed, 27 insertions(+)
+
+diff --git a/src/indent.c b/src/indent.c
+index bef20db045f1..1343d654fd57 100644
+--- a/src/indent.c
++++ b/src/indent.c
+@@ -689,6 +689,7 @@ scan_for_column (ptrdiff_t *endpos, EMACS_INT *goalcol,
+       while (scan == next_boundary)
+ 	{
+ 	  ptrdiff_t old_scan = scan;
++	  ptrdiff_t old_boundary = next_boundary;
+ 	  /* This updates NEXT_BOUNDARY to the next place
+ 	     where we might need to skip more invisible text.  */
+ 	  scan = skip_invisible (scan, &next_boundary, end, Qnil);
+@@ -696,6 +697,10 @@ scan_for_column (ptrdiff_t *endpos, EMACS_INT *goalcol,
+ 	    scan_byte = CHAR_TO_BYTE (scan);
+ 	  if (scan >= end)
+ 	    goto endloop;
++	  /* Lisp called while scanning can narrow the buffer below END.
++	     Avoid spinning at the new ZV if neither value advances.  */
++	  if (scan == old_scan && next_boundary == old_boundary)
++	    goto endloop;
+ 	  /* We may have over-stepped cmp_it.stop_pos while skipping
+ 	     the invisible text.  If so, update cmp_it.stop_pos.  */
+ 	  if (scan > cmp_it.stop_pos && cmp_it.id < 0)
+diff --git a/test/src/indent-tests.el b/test/src/indent-tests.el
+index 5c6e25868f8e..d0cd8513a4a1 100644
+--- a/test/src/indent-tests.el
++++ b/test/src/indent-tests.el
+@@ -58,4 +58,26 @@ indent-tests-move-to-column-invis-between-tabs
+       (buffer-substring-no-properties 1 14))
+     "\txxx    \tLine")))
+ 
++(ert-deftest indent-tests-current-column-after-narrowing ()
++  "`current-column' terminates if auto-composition narrows the buffer."
++  (with-temp-buffer
++    (insert "aaaaaaaaaa")
++    (make-overlay 1 3)
++    (goto-char (point-max))
++    (save-window-excursion
++      (set-window-buffer (selected-window) (current-buffer))
++      (let* ((composition-function-table (make-char-table nil))
++             (narrowed nil)
++             (auto-composition-function
++              (lambda (&rest _)
++                (unless narrowed
++                  (setq narrowed t)
++                  (narrow-to-region (point-min) (1- (point-max))))
++                nil)))
++        (set-char-table-range
++         composition-function-table ?a
++         (list (vector nil 0 #'ignore)))
++        (should (integerp (current-column)))
++        (should narrowed)))))
++
+ ;;; indent-tests.el ends here
+-- 
+2.55.0.windows.4
+

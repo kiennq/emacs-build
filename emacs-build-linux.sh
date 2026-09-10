@@ -38,18 +38,16 @@ echo emacs_build_flags=$emacs_build_flags
 
 cd $emacs_src_dir
 
-# render_libs="libtiff-dev librsvg2-dev libxpm-dev libjpeg-dev libpng-dev libgif-dev libgtk-3-dev libharfbuzz-dev"
-# render_deps="libtiff6,librsvg2-2,libxpm4,libjpeg9,libgif7,libpng16-16,libgtk-3-0,libharfbuzz0b"
 render_libs="libtiff-dev librsvg2-dev libxpm-dev libjpeg-dev libpng-dev libgif-dev libwebp-dev libxaw7-dev libharfbuzz-dev"
-render_deps="libtiff6,librsvg2-2,libxpm4,libjpeg9,libpng16-16,libgif7,libwebp7,libxaw7,libharfbuzz0b"
 
-sudo add-apt-repository -y ppa:ubuntu-toolchain-r/ppa
 sudo apt update
-# libtree-sitter-dev is only supported from Jammy (22.04)
-sudo apt install -y dpkg-dev autoconf make texinfo $render_libs libgnutls28-dev \
-     libncurses-dev libsystemd-dev libgccjit-11-dev gcc-11 libxt-dev \
+sudo apt install -y gcc
+gcc_major="$(gcc -dumpfullversion -dumpversion | cut -d. -f1)"
+libgccjit_package="libgccjit-${gcc_major}-dev"
+sudo apt install -y dpkg-dev autoconf make texinfo binutils file pkg-config libxml2-dev \
+     $render_libs libgnutls28-dev libncurses-dev libsystemd-dev "$libgccjit_package" \
+     libxt-dev \
      libtree-sitter-dev curl
-export CC=/usr/bin/gcc-11 CXX=/usr/bin/gcc-11
 
 ./autogen.sh
 
@@ -80,6 +78,43 @@ fi
 echo "Make install"
 make install-strip DESTDIR=$deb_dir
 
+elf_files=()
+while IFS= read -r -d '' file_path; do
+    case "$(file -b "$file_path")" in
+        ELF*) elf_files+=("$file_path");;
+    esac
+done < <(find "$deb_dir/usr/local/bin" "$deb_dir/usr/local/libexec" \
+              -type f ! -name '*.eln' -print0)
+
+if [ "${#elf_files[@]}" -eq 0 ]; then
+    echo "No ELF binaries found under staged /usr/local/bin or /usr/local/libexec" >&2
+    exit 1
+fi
+
+shlibdeps_dir=$(mktemp -d)
+mkdir -p "$shlibdeps_dir/debian"
+cat > "$shlibdeps_dir/debian/control" << EOF
+Source: emacs-dev
+
+Package: emacs-dev
+Architecture: $arch
+Description: GNU Emacs
+EOF
+
+if ! shlibs_output=$(cd "$shlibdeps_dir" && \
+                     dpkg-shlibdeps -O "${elf_files[@]}"); then
+    rm -rf -- "$shlibdeps_dir"
+    echo "dpkg-shlibdeps failed while generating shared-library dependencies" >&2
+    exit 1
+fi
+rm -rf -- "$shlibdeps_dir"
+
+shlibs_depends="${shlibs_output#shlibs:Depends=}"
+if [ "$shlibs_depends" = "$shlibs_output" ] || [ -z "$shlibs_depends" ]; then
+    echo "dpkg-shlibdeps produced no shlibs:Depends output" >&2
+    exit 1
+fi
+
 # create control file
 echo "Create deb package"
 mkdir -p $deb_dir/DEBIAN
@@ -90,7 +125,7 @@ Version: $emacs_pkg_version
 Architecture: $arch
 Maintainer: www.gnu.org/software/emacs/
 Description: GNU Emacs
-Depends: libgccjit0,libtree-sitter0,${render_deps}
+Depends: $shlibs_depends
 EOF
 
 dpkg-deb --build -z9 --root-owner-group $deb_dir $emacs_dest_dir/$pkg_name

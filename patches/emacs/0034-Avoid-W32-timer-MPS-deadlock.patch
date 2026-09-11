@@ -1,0 +1,129 @@
+From 41e6cf722b6ca7beb700f84a0d689d57aefc352b Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Fri, 11 Sep 2026 12:06:17 -0700
+Subject: [PATCH] Avoid W32 timer MPS deadlock
+
+The W32 timer thread suspends its caller while delivering timer
+signals.  Registering it with MPS lets MPS suspend the timer in
+return, deadlocking both threads.  The handlers only update plain C
+state, so the timer thread does not need an MPS stack root.
+
+* src/w32proc.c (timer_loop): Do not register the timer thread with
+MPS.
+* test/src/igc-tests.el
+(igc-test-w32-timer-not-mps-registered): New test.
+---
+ src/w32proc.c         | 15 ++++-----------
+ test/src/igc-tests.el | 43 ++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 46 insertions(+), 12 deletions(-)
+
+diff --git a/src/w32proc.c b/src/w32proc.c
+index c9ccb31d4a91..f841a9ee6d1e 100644
+--- a/src/w32proc.c
++++ b/src/w32proc.c
+@@ -62,9 +62,6 @@ #define DEFER_MS_W32_H
+ #include "syssignal.h"
+ #include "w32term.h"
+ #include "coding.h"
+-#ifdef HAVE_MPS
+-# include "igc.h"
+-#endif
+ 
+ #define RVA_TO_PTR(var,section,filedata) \
+   ((void *)((section)->PointerToRawData					\
+@@ -483,10 +480,10 @@ w32_get_timer_time (HANDLE thread)
+ static DWORD WINAPI
+ timer_loop (LPVOID arg)
+ {
+-#ifdef HAVE_MPS
+-  w32_aligned_stack_pos stk_bot;
+-  void *igc_thr = w32_add_non_lisp_thread (&stk_bot.c);
+-#endif
++  /* Do not register this thread with MPS.  It suspends the caller while
++     MPS suspends registered threads, so registration could deadlock both.
++     handle_alarm_signal and handle_profiler_signal only update plain C
++     signal state; profiler Lisp work runs later on the main thread.  */
+   struct itimer_data *itimer = (struct itimer_data *)arg;
+   int which = itimer->type;
+   int sig = (which == ITIMER_REAL) ? SIGALRM : SIGPROF;
+@@ -622,10 +619,6 @@ timer_loop (LPVOID arg)
+     }
+ 
+  out:
+-
+-#ifdef HAVE_MPS
+-  w32_remove_non_lisp_thread (igc_thr);
+-#endif
+   return retval;
+ }
+ 
+diff --git a/test/src/igc-tests.el b/test/src/igc-tests.el
+index e2145ec20381..5f2570005990 100644
+--- a/test/src/igc-tests.el
++++ b/test/src/igc-tests.el
+@@ -1,6 +1,6 @@
+ ;;; igc-tests.el --- tests for src/igc.c  -*- lexical-binding: t -*-
+ 
+-;; Copyright (C) 2024-2025 Free Software Foundation, Inc.
++;; Copyright (C) 2024-2026 Free Software Foundation, Inc.
+ 
+ ;; This file is part of GNU Emacs.
+ 
+@@ -22,6 +22,7 @@
+ (require 'ert)
+ (require 'filenotify)
+ 
++(declare-function igc--roots "igc.c")
+ (declare-function igc--set-commit-limit "igc.c")
+ (declare-function igc--set-pause-time "igc.c")
+ (declare-function igc-info "igc.c")
+@@ -113,6 +114,46 @@ igc-test-w32-select-thread-race
+         (file-notify-rm-watch watch))
+       (delete-directory dir t))))
+ 
++(ert-deftest igc-test-w32-timer-not-mps-registered ()
++  "Keep the W32 timer thread outside the MPS thread ring."
++  :tags '(:igc)
++  (skip-unless (eq system-type 'windows-nt))
++  (skip-unless (fboundp 'igc--roots))
++  (skip-unless (fboundp 'profiler-cpu-start))
++  (let ((emacs (expand-file-name invocation-name invocation-directory)))
++    (skip-unless (file-executable-p emacs))
++    (with-temp-buffer
++      (let ((status
++             (call-process
++              emacs nil '(t t) nil
++              "-Q" "--batch" "--eval"
++              (prin1-to-string
++               '(let ((control-stack-count
++                       (lambda ()
++                         (let ((count 0))
++                           (dolist (root (igc--roots) count)
++                             (when (equal (car root) "control stack")
++                               (setq count (1+ count))))))))
++                  (let ((before (funcall control-stack-count))
++                        (after 0)
++                        (unchanged t))
++                    (unwind-protect
++                        (progn
++                          (profiler-cpu-start
++                           (min most-positive-fixnum 10000000000))
++                          (dotimes (_ 20)
++                            (sleep-for 0.01)
++                            (setq after (funcall control-stack-count))
++                            (unless (= after before)
++                              (setq unchanged nil))))
++                      (profiler-cpu-stop))
++                    (unless unchanged
++                      (princ (format "control-stack roots: %d -> %d\n"
++                                     before after)))
++                    (kill-emacs (if unchanged 0 1))))))))
++        (ert-info ((concat "Process output:\n" (buffer-string)))
++          (should (eql status 0)))))))
++
+ (defun igc-tests--binary-search (start end cmp)
+   (named-let search ((start start) (end end))
+     (let* ((len (- end start))
+-- 
+2.55.0.windows.4
+

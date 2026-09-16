@@ -1,131 +1,208 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-function write_help () {
-    printf "Usage: ./emacs-build-linux.sh [--version|-v <emacs_version>]
-                              [--commit|-c <emacs_commit_hash>]
-                              [--src|-s <emacs_src_dir>]
-                              [--dest|-d <pkg_dest_dir>]
-                              [-?|-h|--help]
-                              [<build_flags>]\n"
+set -euo pipefail
+
+write_help() {
+    cat <<'EOF'
+Usage: ./emacs-build-linux.sh --version <emacs_version>
+                              --repo <emacs_repository>
+                              --commit <emacs_commit_hash>
+                              [--dest <bundle_destination>]
+                              [--manifest <flatpak_manifest>]
+                              [-h|--help]
+                              [<build_options>...]
+EOF
 }
 
-emacs_pkg_version="0.0.0.0"
-emacs_commit_hash=""
-emacs_build_flags=""
-emacs_dest_dir="$(pwd)"
-emacs_src_dir="$(pwd)"
+fail() {
+    echo "error: $*" >&2
+    exit 1
+}
 
-while test -n "$*"; do
-    case $1 in
-        --version|-v) shift; emacs_pkg_version="$1";;
-        --commit|-c) shift; emacs_commit_hash="$1";;
-        --dest|-d) shift; emacs_dest_dir="$(readlink -f $1)";;
-        --src|-s) shift; emacs_src_dir="$(readlink -f $1)";;
-        -?|-h|--help) write_help; exit 0;;
-        *) emacs_build_flags="$emacs_build_flags $1";;
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+emacs_version=""
+emacs_repo=""
+emacs_commit=""
+dest_dir="$PWD"
+manifest="$script_dir/flatpak/io.github.kiennq.emacs.json"
+build_options=()
+
+while (($#)); do
+    case "$1" in
+        --version|-v)
+            (($# >= 2)) || fail "$1 requires a value"
+            emacs_version="$2"
+            shift 2
+            ;;
+        --repo|-r)
+            (($# >= 2)) || fail "$1 requires a value"
+            emacs_repo="$2"
+            shift 2
+            ;;
+        --commit|-c)
+            (($# >= 2)) || fail "$1 requires a value"
+            emacs_commit="$2"
+            shift 2
+            ;;
+        --dest|-d)
+            (($# >= 2)) || fail "$1 requires a value"
+            dest_dir="$2"
+            shift 2
+            ;;
+        --manifest|-m)
+            (($# >= 2)) || fail "$1 requires a value"
+            manifest="$2"
+            shift 2
+            ;;
+        -h|--help)
+            write_help
+            exit 0
+            ;;
+        *)
+            build_options+=("$1")
+            shift
+            ;;
     esac
-    shift
 done
 
-# override commit hash from pkg_version if not set
-emacs_commit_hash=${emacs_commit_hash:-$(echo $emacs_pkg_version | awk -F. '{print $4}')}
+[[ -n "$emacs_version" ]] || fail "--version is required"
+[[ "$emacs_version" =~ ^[0-9A-Za-z._+-]+$ ]] ||
+    fail "version contains unsupported filename characters"
+[[ -n "$emacs_repo" ]] || fail "--repo is required"
+[[ "$emacs_commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
+    fail "--commit must be a full 40-character Git commit hash"
+[[ -f "$manifest" ]] || fail "Flatpak manifest not found: $manifest"
 
-echo emacs_src_dir=$emacs_src_dir
-echo emacs_dest_dir=$emacs_dest_dir
-echo emacs_pkg_version=$emacs_pkg_version
-echo emacs_commit_hash=$emacs_commit_hash
-echo emacs_build_flags=$emacs_build_flags
+case "$(uname -m)" in
+    x86_64|amd64) ;;
+    *) fail "only x86_64 Linux builds are supported" ;;
+esac
 
-cd $emacs_src_dir
+mkdir -p "$dest_dir"
+dest_dir="$(cd "$dest_dir" && pwd)"
+manifest="$(cd "$(dirname "$manifest")" && pwd)/$(basename "$manifest")"
+build_manifest="$manifest"
+temporary_manifest=""
 
-render_libs="libtiff-dev librsvg2-dev libxpm-dev libjpeg-dev libpng-dev libgif-dev libwebp-dev libxaw7-dev libharfbuzz-dev"
+source_dir="$script_dir/git/emacs"
+build_dir="$script_dir/build/flatpak"
+state_dir="$script_dir/build/flatpak-state"
+repo_dir="$script_dir/pkg/flatpak-repo"
+app_id="io.github.kiennq.emacs"
+runtime_repo="https://flathub.org/repo/flathub.flatpakrepo"
+bundle="$dest_dir/emacs-${emacs_version}-x86_64.flatpak"
 
-sudo apt update
-sudo apt install -y gcc
-gcc_major="$(gcc -dumpfullversion -dumpversion | cut -d. -f1)"
-libgccjit_package="libgccjit-${gcc_major}-dev"
-sudo apt install -y dpkg-dev autoconf make texinfo binutils file pkg-config libxml2-dev \
-     $render_libs libgnutls28-dev libncurses-dev libsystemd-dev "$libgccjit_package" \
-     libxt-dev \
-     libtree-sitter-dev curl
+install_flatpak_tools() {
+    local packages=()
+    local elevate=()
 
-./autogen.sh
+    command -v flatpak >/dev/null 2>&1 || packages+=(flatpak)
+    command -v flatpak-builder >/dev/null 2>&1 || packages+=(flatpak-builder)
+    command -v python3 >/dev/null 2>&1 || packages+=(python3)
+    ((${#packages[@]})) || return 0
 
-arch=$(dpkg-architecture -q DEB_HOST_ARCH)
-pkg_name=emacs-dev_${emacs_commit_hash}_$(dpkg-architecture -q DEB_HOST_MULTIARCH).deb
-deb_dir=$(pwd)/deb_pkg
-mkdir -p $deb_dir/usr/local/
+    command -v apt-get >/dev/null 2>&1 ||
+        fail "install ${packages[*]} and rerun this script"
 
-echo arch=$arch
-echo deb_dir=$deb_dir
-echo pkg_name=$pkg_name
+    if ((EUID != 0)); then
+        command -v sudo >/dev/null 2>&1 ||
+            fail "sudo is required to install ${packages[*]}"
+        elevate=(sudo)
+    fi
 
-export LDFLAGS="${LDFLAGS} -lpthread"
-./configure CFLAGS="-O2 -fno-semantic-interposition -g $CFLAGS" \
-            --prefix=/usr/local/ \
-            --with-included-regex --with-native-compilation \
-            --with-small-ja-dic --with-x-toolkit=lucid --with-xwidgets $emacs_build_flags \
-            --with-sound=no --without-gpm --without-dbus \
-            --without-pop --without-mailutils --without-gsettings \
-            --with-all
+    "${elevate[@]}" apt-get update
+    "${elevate[@]}" apt-get install -y "${packages[@]}"
+}
 
-echo "Initial make"
-make -j$((`nproc` * 2))
-if [ $? -ne 0 ]; then
-    exit -1
-fi
+prepare_emacs_source() {
+    local fetched_commit
 
-echo "Make install"
-make install-strip DESTDIR=$deb_dir
+    mkdir -p "$(dirname "$source_dir")"
 
-elf_files=()
-while IFS= read -r -d '' file_path; do
-    case "$(file -b "$file_path")" in
-        ELF*) elf_files+=("$file_path");;
-    esac
-done < <(find "$deb_dir/usr/local/bin" "$deb_dir/usr/local/libexec" \
-              -type f ! -name '*.eln' -print0)
+    if [[ -d "$source_dir/.git" ]]; then
+        git -C "$source_dir" remote set-url origin "$emacs_repo"
+    else
+        [[ ! -e "$source_dir" ]] ||
+            fail "$source_dir exists but is not a Git checkout"
+        mkdir "$source_dir"
+        git -C "$source_dir" init
+        git -C "$source_dir" remote add origin "$emacs_repo"
+    fi
 
-if [ "${#elf_files[@]}" -eq 0 ]; then
-    echo "No ELF binaries found under staged /usr/local/bin or /usr/local/libexec" >&2
-    exit 1
-fi
+    git -C "$source_dir" fetch --filter=tree:0 --no-tags --force origin "$emacs_commit"
+    fetched_commit="$(git -C "$source_dir" rev-parse 'FETCH_HEAD^{commit}')"
+    [[ "${fetched_commit,,}" == "${emacs_commit,,}" ]] ||
+        fail "requested commit was not fetched from $emacs_repo"
 
-shlibdeps_dir=$(mktemp -d)
-mkdir -p "$shlibdeps_dir/debian"
-cat > "$shlibdeps_dir/debian/control" << EOF
-Source: emacs-dev
+    git -C "$source_dir" checkout --detach --force "$fetched_commit"
+    git -C "$source_dir" clean -ffdx
+}
 
-Package: emacs-dev
-Architecture: $arch
-Description: GNU Emacs
-EOF
+prepare_manifest() {
+    ((${#build_options[@]})) || return 0
 
-if ! shlibs_output=$(cd "$shlibdeps_dir" && \
-                     dpkg-shlibdeps -O "${elf_files[@]}"); then
-    rm -rf -- "$shlibdeps_dir"
-    echo "dpkg-shlibdeps failed while generating shared-library dependencies" >&2
-    exit 1
-fi
-rm -rf -- "$shlibdeps_dir"
+    temporary_manifest="$(
+        mktemp --suffix=.json "$(dirname "$manifest")/.emacs-flatpak-manifest.XXXXXX"
+    )"
+    python3 - "$manifest" "$temporary_manifest" "${build_options[@]}" <<'PY'
+import json
+import sys
 
-shlibs_depends="${shlibs_output#shlibs:Depends=}"
-if [ "$shlibs_depends" = "$shlibs_output" ] || [ -z "$shlibs_depends" ]; then
-    echo "dpkg-shlibdeps produced no shlibs:Depends output" >&2
-    exit 1
-fi
+source, destination, *build_options = sys.argv[1:]
+with open(source, encoding="utf-8") as source_file:
+    manifest = json.load(source_file)
 
-# create control file
-echo "Create deb package"
-mkdir -p $deb_dir/DEBIAN
+for module in manifest["modules"]:
+    if module.get("name") == "emacs":
+        module.setdefault("config-opts", []).extend(build_options)
+        break
+else:
+    raise SystemExit("Emacs module not found in Flatpak manifest")
 
-cat > $deb_dir/DEBIAN/control << EOF
-Package: emacs-dev
-Version: $emacs_pkg_version
-Architecture: $arch
-Maintainer: www.gnu.org/software/emacs/
-Description: GNU Emacs
-Depends: $shlibs_depends
-EOF
+with open(destination, "w", encoding="utf-8", newline="\n") as destination_file:
+    json.dump(manifest, destination_file, indent=2)
+    destination_file.write("\n")
+PY
+    build_manifest="$temporary_manifest"
+}
 
-dpkg-deb --build -z9 --root-owner-group $deb_dir $emacs_dest_dir/$pkg_name
+cleanup() {
+    [[ -z "$temporary_manifest" ]] || rm -f -- "$temporary_manifest"
+}
+
+trap cleanup EXIT
+
+install_flatpak_tools
+prepare_emacs_source
+prepare_manifest
+
+mkdir -p "$state_dir" "$repo_dir"
+flatpak remote-add --user --if-not-exists flathub "$runtime_repo"
+
+flatpak-builder \
+    --user \
+    --assumeyes \
+    --ccache \
+    --force-clean \
+    --install-deps-from=flathub \
+    --repo="$repo_dir" \
+    --state-dir="$state_dir" \
+    "$build_dir" \
+    "$build_manifest"
+
+flatpak-builder --run "$build_dir" "$build_manifest" emacs --batch \
+    --eval '(unless (and (native-comp-available-p)
+                         (treesit-available-p)
+                         (libxml-available-p)
+                         (string-match-p "MPS" system-configuration-features))
+               (kill-emacs 1))'
+
+rm -f -- "$bundle"
+flatpak build-bundle \
+    --arch=x86_64 \
+    --runtime-repo="$runtime_repo" \
+    "$repo_dir" \
+    "$bundle" \
+    "$app_id"
+
+echo "Created $bundle"

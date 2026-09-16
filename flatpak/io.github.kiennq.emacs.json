@@ -1,0 +1,198 @@
+{
+  "app-id": "io.github.kiennq.emacs",
+  "runtime": "org.freedesktop.Sdk",
+  "runtime-version": "25.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "emacs-wrapper",
+  "rename-icon": "emacs",
+  "rename-appdata-file": "emacs.metainfo.xml",
+  "rename-desktop-file": "emacs.desktop",
+  "finish-args": [
+    "--share=network",
+    "--share=ipc",
+    "--socket=pulseaudio",
+    "--socket=x11",
+    "--socket=ssh-auth",
+    "--socket=gpg-agent",
+    "--filesystem=host",
+    "--filesystem=/tmp",
+    "--filesystem=/var/tmp",
+    "--talk-name=org.freedesktop.Flatpak"
+  ],
+  "modules": [
+    {
+      "name": "tree-sitter",
+      "buildsystem": "simple",
+      "build-commands": [
+        "PREFIX=/app make -j$FLATPAK_BUILDER_N_JOBS",
+        "PREFIX=/app make install"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/tree-sitter/tree-sitter.git",
+          "tag": "v0.27.0",
+          "commit": "6070dbfefd326bd735e5683eb128cc1b57dad0c0"
+        }
+      ],
+      "cleanup": [
+        "/include",
+        "/lib/pkgconfig",
+        "/lib/*.a"
+      ]
+    },
+    {
+      "name": "libgccjit",
+      "buildsystem": "autotools",
+      "builddir": true,
+      "config-opts": [
+        "--enable-languages=jit",
+        "--enable-host-shared",
+        "--enable-checking=release",
+        "--disable-bootstrap",
+        "--disable-multilib",
+        "--disable-nls",
+        "--with-gmp=/app",
+        "--with-mpfr=/app",
+        "--with-mpc=/app"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://ftp.gnu.org/gnu/gcc/gcc-15.2.0/gcc-15.2.0.tar.xz",
+          "sha256": "438fd996826b0c82485a29da03a72d71d6e3541a83ec702df4271f6fe025d24e"
+        }
+      ],
+      "modules": [
+        {
+          "name": "gmp",
+          "buildsystem": "autotools",
+          "config-opts": [
+            "--enable-static",
+            "--disable-shared",
+            "CFLAGS=-fPIC -std=gnu17"
+          ],
+          "sources": [
+            {
+              "type": "archive",
+              "url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+              "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"
+            }
+          ],
+          "cleanup": [
+            "*"
+          ]
+        },
+        {
+          "name": "mpfr",
+          "buildsystem": "autotools",
+          "config-opts": [
+            "--enable-static",
+            "--disable-shared",
+            "--with-gmp=/app",
+            "CFLAGS=-fPIC"
+          ],
+          "sources": [
+            {
+              "type": "archive",
+              "url": "https://www.mpfr.org/mpfr-current/mpfr-4.2.2.tar.xz",
+              "sha256": "b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01"
+            }
+          ],
+          "cleanup": [
+            "*"
+          ]
+        },
+        {
+          "name": "mpc",
+          "buildsystem": "autotools",
+          "config-opts": [
+            "--enable-static",
+            "--disable-shared",
+            "--with-gmp=/app",
+            "--with-mpfr=/app",
+            "CFLAGS=-fPIC"
+          ],
+          "sources": [
+            {
+              "type": "archive",
+              "url": "https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz",
+              "sha256": "ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8"
+            }
+          ],
+          "cleanup": [
+            "*"
+          ]
+        }
+      ],
+      "cleanup": [
+        "/include",
+        "/lib/debug",
+        "/lib/*.a",
+        "/lib/*.la",
+        "/share/doc",
+        "/share/info",
+        "/share/man"
+      ]
+    },
+    {
+      "name": "emacs",
+      "buildsystem": "autotools",
+      "config-opts": [
+        "--with-mps",
+        "--with-native-compilation",
+        "--with-tree-sitter",
+        "--with-rsvg",
+        "--with-x-toolkit=lucid",
+        "--without-xwidgets",
+        "--with-sound=no",
+        "--without-gpm",
+        "--without-dbus",
+        "--without-pop",
+        "--without-mailutils",
+        "--without-gsettings"
+      ],
+      "build-options": {
+        "cflags": "-O2 -fno-semantic-interposition -g"
+      },
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../git/emacs"
+        }
+      ],
+      "post-install": [
+        "grep -Fxq 'Exec=emacs %F' /app/share/applications/emacs.desktop && sed -i 's/^Exec=emacs %F$/Exec=emacs-wrapper %F/' /app/share/applications/emacs.desktop"
+      ],
+      "cleanup": [
+        "/include",
+        "/lib/systemd",
+        "/share/icons/hicolor/scalable/apps/emacs.ico",
+        "/share/icons/hicolor/scalable/mimetypes/emacs-document.svg",
+        "/share/icons/hicolor/scalable/mimetypes/emacs-document23.svg"
+      ]
+    },
+    {
+      "name": "wrapper",
+      "buildsystem": "meson",
+      "config-opts": [
+        "-Deditor_binary=/app/bin/emacs",
+        "-Dprogram_name=emacs-wrapper",
+        "-Deditor_title=GNU Emacs",
+        "-Dflagfile_prefix=flatpak-emacs",
+        "-Dfirst_run_template=emacs-first-run.txt"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/flathub-infra/ide-flatpak-wrapper.git",
+          "commit": "a9d22d1b36fc8bb814c77d70957715bbc5840f83"
+        },
+        {
+          "type": "file",
+          "path": "emacs-first-run.txt"
+        }
+      ]
+    }
+  ]
+}

@@ -27,10 +27,12 @@ jobs:
           git clone --depth 1 $EMACS_REPO .
           ts=`date +'%Y%m%d'`
           commit=`git rev-parse --short=8 HEAD`
+          full_commit=`git rev-parse HEAD`
           major_ver=`cat configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`
           version=`echo ${major_ver}.${{ github.run_number }}.${ts}.${commit}`
 
           echo "commit=${commit}" >> $GITHUB_ENV
+          echo "full_commit=${full_commit}" >> $GITHUB_ENV
           echo "version=${version}" >> $GITHUB_ENV
           echo "pkg_version=${major_ver}.${{ github.run_number }}.0.0" >> $GITHUB_ENV
     outputs:
@@ -38,6 +40,7 @@ jobs:
       version: ${{ env.version }}
       pkg_version: ${{ env.pkg_version }}
       commit: ${{ env.commit }}
+      full_commit: ${{ env.full_commit }}
 
   build_windows:
     needs: prepare_env
@@ -139,8 +142,6 @@ jobs:
   build_linux:
     needs: prepare_env
     name: Build Emacs
-    # Matrix strategy from
-    # https://github.com/msys2/MINGW-packages/blob/master/.github/workflows/main.yml
     strategy:
       fail-fast: false
       matrix:
@@ -149,48 +150,37 @@ jobs:
             shell: bash
             build_options: --with-rsvg --with-mps --without-xwidgets
 
-    # The type of runner that the job will run on
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
+      EMACS_VERSION: ${{ needs.prepare_env.outputs.version }}
       EMACS_REPO: ${{ needs.prepare_env.outputs.repo }}
-      EMACS_COMMIT: ${{ needs.prepare_env.outputs.commit }}
-      EMACS_PKG_VERSION: ${{ needs.prepare_env.outputs.pkg_version }}
-      EMACS_CERT_SECRET: ${{ secrets.EMACS_CERT_SECRET }}
+      EMACS_COMMIT: ${{ needs.prepare_env.outputs.full_commit }}
 
     defaults:
       run:
         shell: ${{ matrix.shell }}
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v7
 
-      - name: Clone Emacs
-        run: |
-          mkdir -p ./git/emacs
-          cd ./git/emacs/
-          git clone --filter=tree:0 --no-checkout $EMACS_REPO .
-          git checkout $EMACS_COMMIT
-
-      # - name: Install deps
-      #   run: sudo .github/scripts/install-libs.sh
-
-      - name: Build and pack Emacs
+      - name: Build Flatpak
         run: |
           chmod 755 ./emacs-build-linux.sh
           mkdir -p ./zips
-          ./emacs-build-linux.sh -s ./git/emacs/ -v ${{ needs.prepare_env.outputs.version }} -d ./zips ${{ matrix.build_options }}
+          ./emacs-build-linux.sh \
+            --version "$EMACS_VERSION" \
+            --repo "$EMACS_REPO" \
+            --commit "$EMACS_COMMIT" \
+            --dest ./zips \
+            ${{ matrix.build_options }}
 
-      # Upload release for each build
       - name: Upload binaries to release
         id: upload_release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/*.deb
-          file_glob: true
+          file: ./zips/emacs-${{ needs.prepare_env.outputs.version }}-x86_64.flatpak
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}
           draft: false

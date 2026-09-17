@@ -1,0 +1,126 @@
+From 31152af3bce18baef6c125721e6383de69517b32 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 17 Sep 2026 02:40:54 -0700
+Subject: [PATCH] Avoid unsafe scratch buffer initialization
+
+* src/buffer.c (other_buffer_safely): Inhibit buffer hooks for
+emergency scratch buffer creation.  Avoid major-mode setup.
+* test/lisp/emacs-lisp/lisp-tests.el
+(core-elisp-tests-window-configuration-killed-buffer): New test.
+---
+ src/buffer.c                       |  3 +-
+ test/lisp/emacs-lisp/lisp-tests.el | 84 ++++++++++++++++++++++++++++++
+ 2 files changed, 85 insertions(+), 2 deletions(-)
+
+diff --git a/src/buffer.c b/src/buffer.c
+index 0728347ffec2..bd17915ddfcd 100644
+--- a/src/buffer.c
++++ b/src/buffer.c
+@@ -1824,8 +1824,7 @@ other_buffer_safely (Lisp_Object buffer)
+   if (NILP (buf))
+     {
+       AUTO_STRING (scratch, "*scratch*");
+-      buf = Fget_buffer_create (scratch, Qnil);
+-      Fset_buffer_major_mode (buf);
++      buf = Fget_buffer_create (scratch, Qt);
+     }
+   return buf;
+ }
+diff --git a/test/lisp/emacs-lisp/lisp-tests.el b/test/lisp/emacs-lisp/lisp-tests.el
+index eb4b12b1ffbc..301e5fc7d2af 100644
+--- a/test/lisp/emacs-lisp/lisp-tests.el
++++ b/test/lisp/emacs-lisp/lisp-tests.el
+@@ -221,6 +221,90 @@ core-elisp-tests-1-window-configurations
+     (set-window-configuration wc)
+     (should (or (not mark-active) (mark)))))
+ 
++(ert-deftest core-elisp-tests-window-configuration-killed-buffer ()
++  "Recover a killed-buffer window without fallback mode initialization."
++  (let ((original-configuration (current-window-configuration))
++        (victim (generate-new-buffer " *window-config-killed*"))
++        (holder (generate-new-buffer " *window-config-holder*"))
++        (messages (get-buffer-create "*Messages*"))
++        (renamed-buffers nil)
++        (fallback-hook-called nil)
++        (mode-called nil)
++        (escaped-error nil)
++        (selected-buffer nil)
++        (original-scratch (get-buffer "*scratch*")))
++    (unwind-protect
++        (progn
++          (switch-to-buffer victim)
++          (let* ((target (selected-window))
++                 (other (split-window-right))
++                 (configuration
++                  (progn
++                    (set-window-buffer other holder)
++                    (current-window-configuration))))
++            (delete-window target)
++            (kill-buffer victim)
++            (switch-to-buffer messages)
++            ;; Hide every other buffer so `other_buffer_safely' must use
++            ;; its *scratch* fallback.
++            (dolist (buffer (buffer-list))
++              (unless (or (eq buffer messages)
++                          (string-prefix-p " " (buffer-name buffer)))
++                (push (cons buffer (buffer-name buffer)) renamed-buffers)
++                (with-current-buffer buffer
++                  (rename-buffer (concat " " (buffer-name)) t))))
++            (should-not (get-buffer "*scratch*"))
++            (cl-letf (((symbol-function 'get-scratch-buffer-create)
++                       (lambda ()
++                         (error
++                          "forced get-scratch-buffer-create failure"))))
++              (let ((buffer-list-update-hook
++                     (list
++                      (lambda ()
++                        (when (and (eq (current-buffer) messages)
++                                   (get-buffer "*scratch*"))
++                          (setq fallback-hook-called t)
++                          (error
++                           "forced buffer-list-update-hook failure")))))
++                  (initial-major-mode
++                   (lambda ()
++                     (setq mode-called t)
++                     (error "forced initial-major-mode failure"))))
++                (condition-case err
++                    (set-window-configuration configuration)
++                  (error (setq escaped-error err)))))
++            (setq selected-buffer
++                  (condition-case nil
++                      (window-buffer (selected-window))
++                    (error nil)))
++            (when (window-live-p other)
++              (set-window-buffer other holder)
++              (select-window other))
++            (when (and (window-live-p (selected-window))
++                       (buffer-live-p holder))
++              (set-window-buffer (selected-window) holder)))
++        (should-not fallback-hook-called)
++        (should-not mode-called)
++        (should (buffer-live-p selected-buffer))
++        (should (equal (buffer-name selected-buffer) "*scratch*"))
++        (should (eq (buffer-local-value 'major-mode selected-buffer)
++                    'fundamental-mode))
++        (should-not escaped-error))
++      (let ((scratch (get-buffer "*scratch*")))
++        (when (and scratch (not (eq scratch original-scratch)))
++          (ignore-errors (kill-buffer scratch))))
++      (dolist (entry renamed-buffers)
++        (when (buffer-live-p (car entry))
++          (with-current-buffer (car entry)
++            (rename-buffer (cdr entry) t))))
++      (condition-case nil
++          (set-window-configuration original-configuration)
++        (error nil))
++      (when (buffer-live-p victim)
++        (kill-buffer victim))
++      (when (buffer-live-p holder)
++        (kill-buffer holder)))))
++
+ ;; For variable binding tests, see src/data-tests.el.
+ (ert-deftest core-elisp-tests-2-backquote ()
+   (should (eq 3 (eval ``,,'(+ 1 2) t))))
+-- 
+2.55.0.windows.4
+

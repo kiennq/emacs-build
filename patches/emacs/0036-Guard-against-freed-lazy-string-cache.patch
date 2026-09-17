@@ -1,0 +1,27 @@
+From 6b08691ba41cf9de8f1b988fdca99ec85cc01d53 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 17 Sep 2026 10:02:45 -0700
+Subject: [PATCH] Guard against freed lazy string cache
+
+* src/lread.c (get_lazy_string): Treat a saved-string range
+without a backing buffer as a cache miss.
+---
+ src/lread.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/lread.c b/src/lread.c
+index f2447e22dd1d..016095ddc63d 100644
+--- a/src/lread.c
++++ b/src/lread.c
+@@ -3512,7 +3512,7 @@ get_lazy_string (Lisp_Object val)
+   while (ss < ssend
+ 	 && !(pos >= ss->position && pos < ss->position + ss->length))
+     ss++;
+-  if (ss >= ssend)
++  if (ss >= ssend || !ss->string)
+     return get_doc_string (val, 1);
+ 
+   ptrdiff_t start = pos - ss->position;
+-- 
+2.55.0.windows.4
+

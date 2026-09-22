@@ -1,9 +1,8 @@
-This Emacs build runs inside the Freedesktop SDK Flatpak.
+This Emacs build runs inside the Freedesktop Platform Flatpak.
 
-Commands found in the SDK run inside the Flatpak. To run a command from the
-host explicitly, use:
+Commands available inside the Flatpak run in its sandbox. To run a command
+from the host explicitly, use:
 
   flatpak-spawn --host COMMAND
 
-The application can access host files and the SSH/GPG agent sockets. Additional
-SDK extensions can be enabled with FLATPAK_ENABLE_SDK_EXT.
+The application can access host files and the SSH/GPG agent sockets.

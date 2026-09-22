@@ -190,12 +190,22 @@ flatpak-builder \
     "$build_dir" \
     "$build_manifest"
 
-flatpak-builder --run "$build_dir" "$build_manifest" emacs --batch \
+flatpak build --runtime "$build_dir" emacs --batch -Q \
     --eval '(unless (and (native-comp-available-p)
                          (treesit-available-p)
                          (libxml-available-p)
                          (string-match-p "MPS" system-configuration-features))
-               (kill-emacs 1))'
+               (kill-emacs 1))' \
+    --eval '(let ((source (make-temp-file "flatpak-native-" nil ".el"
+                                         ";;; -*- lexical-binding: t; -*-\n(defun flatpak-native-smoke (x) (+ x 1))"))
+                  output)
+               (unwind-protect
+                   (progn (setq output (native-compile source))
+                          (load output nil t)
+                          (unless (= (flatpak-native-smoke 41) 42)
+                            (error "Native compilation returned the wrong result")))
+                 (delete-file source)
+                 (when output (delete-file output))))'
 
 rm -f -- "$bundle"
 flatpak build-bundle \

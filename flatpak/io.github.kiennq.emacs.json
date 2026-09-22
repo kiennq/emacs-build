@@ -1,6 +1,6 @@
 {
   "app-id": "io.github.kiennq.emacs",
-  "runtime": "org.freedesktop.Sdk",
+  "runtime": "org.freedesktop.Platform",
   "runtime-version": "25.08",
   "sdk": "org.freedesktop.Sdk",
   "command": "emacs-wrapper",
@@ -125,6 +125,9 @@
           ]
         }
       ],
+      "post-install": [
+        "set -eu; gcc_libdir=$(dirname \"$(/app/bin/gcc -print-libgcc-file-name)\"); for file in crti.o crtn.o libc_nonshared.a; do install -m 644 \"/usr/lib/x86_64-linux-gnu/$file\" \"$gcc_libdir/$file\"; done; grep -Fq '/usr/lib/x86_64-linux-gnu/libc_nonshared.a' /usr/lib/x86_64-linux-gnu/libc.so; sed \"s|/usr/lib/x86_64-linux-gnu/libc_nonshared.a|$gcc_libdir/libc_nonshared.a|\" /usr/lib/x86_64-linux-gnu/libc.so > \"$gcc_libdir/libc.so\""
+      ],
       "cleanup": [
         "/include",
         "/lib/debug",
@@ -161,6 +164,41 @@
           "url": "https://xorg.freedesktop.org/archive/individual/lib/libXaw-1.0.16.tar.xz",
           "sha256": "731d572b54c708f81e197a6afa8016918e2e06dfd3025e066ca642a5b8c39c8f"
         }
+      ]
+    },
+    {
+      "name": "binutils",
+      "buildsystem": "autotools",
+      "builddir": true,
+      "config-opts": [
+        "--disable-binutils",
+        "--disable-gdb",
+        "--disable-gprofng",
+        "--disable-nls",
+        "--disable-sim",
+        "--disable-werror"
+      ],
+      "make-args": [
+        "all-gas",
+        "all-ld"
+      ],
+      "no-make-install": true,
+      "build-commands": [
+        "make install-gas install-ld"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://ftp.gnu.org/gnu/binutils/binutils-2.47.tar.xz",
+          "sha256": "154ab23b60070e8f27013c22977f1129425d67d1e8acd6e13010e617811e4cff"
+        }
+      ],
+      "cleanup": [
+        "/include",
+        "/lib/*.a",
+        "/lib/*.la",
+        "/share/info",
+        "/share/man"
       ]
     },
     {

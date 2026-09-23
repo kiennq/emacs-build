@@ -180,7 +180,8 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/emacs-${{ needs.prepare_env.outputs.version }}-x86_64.flatpak
+          file: ./zips/emacs_${{ needs.prepare_env.outputs.commit }}_*.flatpak
+          file_glob: true
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}
           draft: false

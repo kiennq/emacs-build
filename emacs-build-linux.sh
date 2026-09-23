@@ -90,7 +90,6 @@ state_dir="$script_dir/build/flatpak-state"
 repo_dir="$script_dir/pkg/flatpak-repo"
 app_id="io.github.kiennq.emacs"
 runtime_repo="https://flathub.org/repo/flathub.flatpakrepo"
-bundle="$dest_dir/emacs-${emacs_version}-x86_64.flatpak"
 
 install_flatpak_tools() {
     local packages=()
@@ -206,6 +205,12 @@ flatpak build --runtime "$build_dir" emacs --batch -Q \
                             (error "Native compilation returned the wrong result")))
                  (delete-file source)
                  (when output (delete-file output))))'
+
+build_triplet="$(flatpak build --runtime "$build_dir" emacs --batch -Q \
+    --eval '(princ system-configuration)')"
+[[ "$build_triplet" =~ ^[0-9A-Za-z._+-]+$ ]] ||
+    fail "invalid Emacs build triplet: $build_triplet"
+bundle="$dest_dir/emacs_${emacs_commit:0:8}_${build_triplet}.flatpak"
 
 rm -f -- "$bundle"
 flatpak build-bundle \

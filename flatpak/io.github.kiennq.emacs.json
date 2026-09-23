@@ -43,99 +43,57 @@
     },
     {
       "name": "libgccjit",
-      "buildsystem": "autotools",
-      "builddir": true,
-      "config-opts": [
-        "--enable-languages=jit",
-        "--enable-host-shared",
-        "--enable-checking=release",
-        "--disable-bootstrap",
-        "--disable-multilib",
-        "--disable-nls",
-        "--with-gmp=/app",
-        "--with-mpfr=/app",
-        "--with-mpc=/app"
+      "buildsystem": "simple",
+      "build-commands": [
+        "set -eu; for package in *.deb; do ar p \"$package\" data.tar.zst | tar --zstd -xf -; done",
+        "install -Dm644 usr/lib/x86_64-linux-gnu/libgccjit.so.15.0.1 /app/lib/libgccjit.so.15.0.1",
+        "ln -s libgccjit.so.15.0.1 /app/lib/libgccjit.so.15",
+        "ln -s libgccjit.so.15 /app/lib/libgccjit.so",
+        "install -Dm644 usr/lib/gcc/x86_64-linux-gnu/15/include/libgccjit.h /app/include/libgccjit.h",
+        "install -Dm755 usr/bin/x86_64-linux-gnu-gcc-15 /app/bin/x86_64-linux-gnu-gcc-15",
+        "install -Dm755 usr/libexec/gcc/x86_64-linux-gnu/15/collect2 /app/libexec/gcc/x86_64-linux-gnu/15/collect2",
+        "set -eu; for file in crtbeginS.o crtendS.o libgcc.a libgcc_s.so; do install -Dm644 \"usr/lib/gcc/x86_64-linux-gnu/15/$file\" \"/app/lib/gcc/x86_64-linux-gnu/15/$file\"; done",
+        "install -Dm644 usr/lib/x86_64-linux-gnu/libisl.so.23.4.0 /app/lib/libisl.so.23.4.0",
+        "ln -s libisl.so.23.4.0 /app/lib/libisl.so.23",
+        "install -Dm644 usr/lib/x86_64-linux-gnu/libmpc.so.3.3.1 /app/lib/libmpc.so.3.3.1",
+        "ln -s libmpc.so.3.3.1 /app/lib/libmpc.so.3",
+        "set -eu; for file in crti.o crtn.o libc_nonshared.a; do install -Dm644 \"/usr/lib/x86_64-linux-gnu/$file\" \"/app/lib/gcc/x86_64-linux-gnu/15/$file\"; done",
+        "grep -Fq '/usr/lib/x86_64-linux-gnu/libc_nonshared.a' /usr/lib/x86_64-linux-gnu/libc.so && sed 's|/usr/lib/x86_64-linux-gnu/libc_nonshared.a|/app/lib/gcc/x86_64-linux-gnu/15/libc_nonshared.a|' /usr/lib/x86_64-linux-gnu/libc.so > /app/lib/gcc/x86_64-linux-gnu/15/libc.so"
       ],
       "sources": [
         {
-          "type": "archive",
-          "url": "https://ftp.gnu.org/gnu/gcc/gcc-15.2.0/gcc-15.2.0.tar.xz",
-          "sha256": "438fd996826b0c82485a29da03a72d71d6e3541a83ec702df4271f6fe025d24e"
-        }
-      ],
-      "modules": [
-        {
-          "name": "gmp",
-          "buildsystem": "autotools",
-          "config-opts": [
-            "--enable-static",
-            "--disable-shared",
-            "CFLAGS=-fPIC -std=gnu17"
-          ],
-          "sources": [
-            {
-              "type": "archive",
-              "url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
-              "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"
-            }
-          ],
-          "cleanup": [
-            "*"
-          ]
+          "type": "file",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260922T000000Z/pool/universe/g/gcc-15/libgccjit15_15.2.0-16ubuntu1_amd64.deb",
+          "sha256": "ed710f5cb08ad273be165fd21b57eb02ca995bc8259286c2c789b88bc2f353a7"
         },
         {
-          "name": "mpfr",
-          "buildsystem": "autotools",
-          "config-opts": [
-            "--enable-static",
-            "--disable-shared",
-            "--with-gmp=/app",
-            "CFLAGS=-fPIC"
-          ],
-          "sources": [
-            {
-              "type": "archive",
-              "url": "https://www.mpfr.org/mpfr-current/mpfr-4.2.2.tar.xz",
-              "sha256": "b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01"
-            }
-          ],
-          "cleanup": [
-            "*"
-          ]
+          "type": "file",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260922T000000Z/pool/universe/g/gcc-15/libgccjit-15-dev_15.2.0-16ubuntu1_amd64.deb",
+          "sha256": "f78386f031c1d11f195bd733df1a16d89df4080ffce3294f0e8d3a3c0fc821cf"
         },
         {
-          "name": "mpc",
-          "buildsystem": "autotools",
-          "config-opts": [
-            "--enable-static",
-            "--disable-shared",
-            "--with-gmp=/app",
-            "--with-mpfr=/app",
-            "CFLAGS=-fPIC"
-          ],
-          "sources": [
-            {
-              "type": "archive",
-              "url": "https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz",
-              "sha256": "ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8"
-            }
-          ],
-          "cleanup": [
-            "*"
-          ]
+          "type": "file",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260922T000000Z/pool/main/g/gcc-15/gcc-15-x86-64-linux-gnu_15.2.0-16ubuntu1_amd64.deb",
+          "sha256": "df0e5375c9e981b18e396c2e9ec1e359f226576a9b94a311bf07603f3ca6023a"
+        },
+        {
+          "type": "file",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260922T000000Z/pool/main/g/gcc-15/libgcc-15-dev_15.2.0-16ubuntu1_amd64.deb",
+          "sha256": "32fa5bde1891f46fd4f422e466c863fb78e834b634e1aa08211c8eea68870af5"
+        },
+        {
+          "type": "file",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260922T000000Z/pool/main/i/isl/libisl23_0.27-1build1_amd64.deb",
+          "sha256": "02ea5de2ab6ddba978606ad58647bf6371ea68c0ed63aa5d6d0d3b8c1fe77ea3"
+        },
+        {
+          "type": "file",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260922T000000Z/pool/main/m/mpclib3/libmpc3_1.3.1-3_amd64.deb",
+          "sha256": "a95c75b486f26fe8b140a632fd9e2883b7e2efc21f7586e155d27d2d2ff0ddc0"
         }
-      ],
-      "post-install": [
-        "set -eu; gcc_libdir=$(dirname \"$(/app/bin/gcc -print-libgcc-file-name)\"); for file in crti.o crtn.o libc_nonshared.a; do install -m 644 \"/usr/lib/x86_64-linux-gnu/$file\" \"$gcc_libdir/$file\"; done; grep -Fq '/usr/lib/x86_64-linux-gnu/libc_nonshared.a' /usr/lib/x86_64-linux-gnu/libc.so; sed \"s|/usr/lib/x86_64-linux-gnu/libc_nonshared.a|$gcc_libdir/libc_nonshared.a|\" /usr/lib/x86_64-linux-gnu/libc.so > \"$gcc_libdir/libc.so\""
       ],
       "cleanup": [
-        "/include",
-        "/lib/debug",
-        "/lib/*.a",
-        "/lib/*.la",
-        "/share/doc",
-        "/share/info",
-        "/share/man"
+        "/include"
       ]
     },
     {

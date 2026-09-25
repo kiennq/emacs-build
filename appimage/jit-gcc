@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+: "${APPDIR:?The GCC JIT driver must run from its AppImage}"
+export COMPILER_PATH="$APPDIR/usr/libexec/emacs-jit/bin"
+export LIBRARY_PATH="$APPDIR/usr/lib/gcc/x86_64-linux-gnu/14:$APPDIR/usr/lib"
+exec "$APPDIR/usr/bin/x86_64-linux-gnu-gcc-14" "$@"

@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+: "${APPDIR:=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+export APPDIR
+
+for emacs_share in "$APPDIR"/usr/share/emacs/*; do
+    if [ -d "$emacs_share/lisp" ] && [ -d "$emacs_share/etc" ]; then
+        break
+    fi
+done
+[ -d "$emacs_share/lisp" ] || {
+    echo "Emacs data not found in $APPDIR" >&2
+    exit 1
+}
+
+export EMACSDATA="$emacs_share/etc"
+export EMACSDOC="$emacs_share/etc"
+export EMACSLOADPATH="$APPDIR/usr/share/emacs/site-lisp:$emacs_share/lisp"
+emacs_exec_dir=""
+for emacs_exec in "$APPDIR/usr/libexec/emacs/${emacs_share##*/}"/*; do
+    if [ -d "$emacs_exec" ]; then
+        emacs_exec_dir="$emacs_exec"
+        break
+    fi
+done
+[ -n "$emacs_exec_dir" ] || {
+    echo "Emacs executables not found in $APPDIR" >&2
+    exit 1
+}
+export EMACSPATH="$emacs_exec_dir"
+export PATH="$APPDIR/usr/libexec/emacs-jit:$PATH"
+
+invoked_as="${ARGV0:-$0}"
+case "${invoked_as##*/}" in
+    emacsclient|emacsclient.AppImage)
+        exec "$APPDIR/usr/bin/emacsclient" "$@"
+        ;;
+esac
+
+case "${1:-}" in
+    --client)
+        shift
+        exec "$APPDIR/usr/bin/emacsclient" "$@"
+        ;;
+    --daemon)
+        shift
+        set -- --fg-daemon "$@"
+        ;;
+    --daemon=*)
+        name="${1#--daemon=}"
+        shift
+        set -- "--fg-daemon=$name" "$@"
+        ;;
+esac
+
+jit_options="(setq native-comp-driver-options (list \"-B$APPDIR/usr/libexec/emacs-jit/bin/\" \"-B$APPDIR/usr/lib/gcc/x86_64-linux-gnu/14/\"))"
+exec "$APPDIR/usr/bin/emacs" --eval "$jit_options" "$@"

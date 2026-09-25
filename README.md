@@ -1,6 +1,6 @@
 # emacs-build v0.4
 
-Scripts to build a distribution of Emacs from sources, using MSYS2 and Mingw64(32)
+Scripts to build Emacs for Windows with MSYS2/MinGW and for Linux as an AppImage.
 
 ## Rationale
 
@@ -15,10 +15,35 @@ different computers, with the following conditions
 
 ## Usage
 
-The script supports two way of being invoked:
+On Windows, there are two ways to invoke the build:
 
 - The `emacs-build.cmd` assumes nothing about your system, except for an existing installation of PowerShell. It will download and install a minimal MSYS/MINGW64 environment and build Emacs and all other requested components. This allows for a more deterministic build, without perturbing your computer.
 - The `emacs-build.sh` is meant to be ran from an existing MSYS/MINGW64 environment, which will be modified to allow building Emacs and all tools. Use this version at your own risk.
+
+### Linux AppImage
+
+The Linux CI release builds on Ubuntu 24.04 and publishes an x86_64 AppImage
+named `emacs_<eight-character-source-hash>_<build-triplet>.AppImage`.
+It runs without a Flatpak sandbox, so Emacs can invoke host tools such
+as `git`.
+`--version` (or `EMACS_PKG_VERSION` for a manual build) is embedded in
+the AppImage's desktop metadata without changing this filename.
+
+```sh
+chmod +x emacs_*.AppImage
+./emacs_*.AppImage
+./emacs_*.AppImage --client some-file
+```
+
+An `emacsclient` symlink to the AppImage also invokes the bundled client
+without a second copy. For a daemon, `--daemon` runs Emacs in the foreground
+so its AppImage stays mounted; keep that process running while clients connect.
+If FUSE support is unavailable, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
+The binaries target glibc-based x86_64 systems with glibc 2.39 or newer.
+Ubuntu 24.04 and 26.04 have been checked; other distributions still need
+validation. Building manually on a newer distribution can raise the
+minimum supported glibc version. Older systems, including Ubuntu 22.04,
+are not covered by the Ubuntu 24.04 CI build.
 
 ### Steps
 

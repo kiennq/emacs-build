@@ -146,7 +146,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-26.04
+          - os: ubuntu-24.04
             shell: bash
             build_options: --with-rsvg --with-mps --without-xwidgets
 
@@ -164,10 +164,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build Flatpak
+      - name: Build AppImage
         run: |
           chmod 755 ./emacs-build-linux.sh
-          mkdir -p ./zips
           ./emacs-build-linux.sh \
             --version "$EMACS_VERSION" \
             --repo "$EMACS_REPO" \
@@ -180,7 +179,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ github.token }}
-          file: ./zips/emacs_${{ needs.prepare_env.outputs.commit }}_*.flatpak
+          file: ./zips/emacs_${{ needs.prepare_env.outputs.commit }}_*.AppImage
           file_glob: true
           tag: v${{ needs.prepare_env.outputs.version }}
           release_name: emacs_${{ needs.prepare_env.outputs.version }}

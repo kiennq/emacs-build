@@ -6,7 +6,7 @@ Subject: [PATCH] Merge upstream/scratch/text-edit
 ---
  .clang-format                |   2 +
  src/Makefile.in              |   3 +-
- src/alloc.c                  |  57 ++-
+ src/alloc.c                  |  54 ++-
  src/buffer.c                 | 126 ++----
  src/buffer.h                 | 130 +-----
  src/callint.c                |   4 +-
@@ -31,12 +31,12 @@ Subject: [PATCH] Merge upstream/scratch/text-edit
  src/text-index.c             | 760 +++++++++++++++++++++++++++++++++++
  src/text-index.h             |  33 ++
  src/textconv.c               |  14 +-
- src/undo.c                   |   5 +-
+ src/undo.c                   |  10 +-
  src/window.c                 |  69 ++--
  src/xdisp.c                  |  38 +-
  test/src/marker-tests.el     |  13 +
  test/src/text-index-tests.el |  95 +++++
- 32 files changed, 1692 insertions(+), 1154 deletions(-)
+ 32 files changed, 1694 insertions(+), 1154 deletions(-)
  create mode 100644 src/marker-vector.c
  create mode 100644 src/marker-vector.h
  create mode 100644 src/text-index.c
@@ -78,23 +78,24 @@ index b42f381c6bd..fa58e1cbd04 100644
  	$(W32_OBJ) $(WINDOW_SYSTEM_OBJ) $(XGSELOBJ)			       \
  	$(HAIKU_OBJ) $(PGTK_OBJ) $(ANDROID_OBJ)
 diff --git a/src/alloc.c b/src/alloc.c
-index e812f4abf1c..27fe50ef563 100644
+index b04d468ad2a..8ded4854bb5 100644
 --- a/src/alloc.c
 +++ b/src/alloc.c
-@@ -3972,11 +3972,7 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
+@@ -3972,12 +3972,9 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
    struct Lisp_Marker *p = ALLOCATE_PLAIN_PSEUDOVECTOR (struct Lisp_Marker,
  						       PVEC_MARKER);
    p->buffer = 0;
 -  p->bytepos = 0;
 -  p->charpos = 0;
--#ifndef HAVE_MPS
--  p->next = NULL;
--#endif
 +  p->entry = 0;
+ #ifdef HAVE_MPS
+   p->undo_id = -1;
+-#else
+-  p->next = NULL;
+ #endif
    p->insertion_type = 0;
    p->need_adjustment = 0;
-   return make_lisp_ptr (p, Lisp_Vectorlike);
-@@ -3986,27 +3982,18 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
+@@ -3988,28 +3985,21 @@ DEFUN ("make-marker", Fmake_marker, Smake_marker, 0, 0, 0,
     at character position CHARPOS and byte position BYTEPOS.  */
  
  Lisp_Object
@@ -114,18 +115,19 @@ index e812f4abf1c..27fe50ef563 100644
 -  m->bytepos = bytepos;
    m->insertion_type = 0;
    m->need_adjustment = 0;
--#ifdef HAVE_MPS
+ #ifdef HAVE_MPS
+   m->undo_id = -1;
 -  igc_add_marker (buf, m);
 -#else
 -  m->next = BUF_MARKERS (buf);
 -  BUF_MARKERS (buf) = m;
--#endif
+ #endif
 +  marker_vector_add (buf, m);
 +  marker_vector_set_charpos (m, charpos);
    return make_lisp_ptr (m, Lisp_Vectorlike);
  }
  
-@@ -6564,6 +6551,13 @@ mark_buffer (struct buffer *buffer)
+@@ -6567,6 +6557,13 @@ mark_buffer (struct buffer *buffer)
  
    mark_interval_tree (buffer_intervals (buffer));
  
@@ -139,7 +141,7 @@ index e812f4abf1c..27fe50ef563 100644
    /* For now, we just don't mark the undo_list.  It's done later in
       a special way just before the sweep phase, and after stripping
       some of its elements that are not needed any more.
-@@ -6571,7 +6565,7 @@ mark_buffer (struct buffer *buffer)
+@@ -6574,7 +6571,7 @@ mark_buffer (struct buffer *buffer)
       for dead buffers, the undo_list should be nil (set by Fkill_buffer),
       but just to be on the safe side, we mark it here.  */
    if (!BUFFER_LIVE_P (buffer))
@@ -148,7 +150,7 @@ index e812f4abf1c..27fe50ef563 100644
  
    if (!itree_empty_p (buffer->overlays))
      mark_overlays (buffer->overlays->root);
-@@ -7403,21 +7397,22 @@ sweep_symbols (void)
+@@ -7406,21 +7403,22 @@ sweep_symbols (void)
    gcstat.total_free_symbols = num_free;
  }
  
@@ -3690,12 +3692,32 @@ index 7a6dd4f05e6..85bfde1c317 100644
        f->conversion.field = Fcons (c1, Fcons (c2, window));
      }
 diff --git a/src/undo.c b/src/undo.c
-index 55245758b4d..315013e7e37 100644
+index 6622ac76e5b..3503f586499 100644
 --- a/src/undo.c
 +++ b/src/undo.c
-@@ -128,9 +128,9 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
- {
-   prepare_record ();
+@@ -286,9 +286,9 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
+   Lisp_Object left = Qnil;
+   Lisp_Object right = Qnil;
+ 
+-  DO_MARKERS (current_buffer, m)
++  FOR_EACH_MARKER (current_buffer, m)
+     {
+-      ptrdiff_t charpos = m->charpos;
++      ptrdiff_t charpos = marker_vector_charpos (m);
+       eassert (charpos <= Z);
+       if (!(from <= charpos && charpos <= to))
+ 	continue;
+@@ -305,7 +305,6 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
+       else
+ 	right = Fcons (pair, right);
+     }
+-  END_DO_MARKERS;
+ 
+   if (!NILP (right) || !NILP (left))
+     {
+@@ -326,9 +325,9 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
+ 
+ #else
  
 -  DO_MARKERS (current_buffer, m)
 +  FOR_EACH_MARKER (current_buffer, m)
@@ -3705,14 +3727,14 @@ index 55245758b4d..315013e7e37 100644
        eassert (charpos <= Z);
  
        if (from <= charpos && charpos <= to)
-@@ -154,7 +154,6 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
+@@ -352,7 +351,6 @@ record_marker_adjustments (ptrdiff_t from, ptrdiff_t to)
              }
          }
      }
 -  END_DO_MARKERS;
+ #endif
  }
  
- /* Record that a deletion is about to take place, of the characters in
 diff --git a/src/window.c b/src/window.c
 index 07036ea6ecb..adffbb161a9 100644
 --- a/src/window.c

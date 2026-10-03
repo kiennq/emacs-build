@@ -7,7 +7,7 @@ Subject: [PATCH] Merge upstream/scratch/text-edit
  .clang-format                |   2 +
  src/Makefile.in              |   3 +-
  src/alloc.c                  |  54 ++-
- src/buffer.c                 | 126 ++----
+ src/buffer.c                 | 136 ++-----
  src/buffer.h                 | 130 +-----
  src/callint.c                |   4 +-
  src/coding.c                 |  38 +-
@@ -36,7 +36,7 @@ Subject: [PATCH] Merge upstream/scratch/text-edit
  src/xdisp.c                  |  38 +-
  test/src/marker-tests.el     |  13 +
  test/src/text-index-tests.el |  95 +++++
- 32 files changed, 1694 insertions(+), 1154 deletions(-)
+ 32 files changed, 1701 insertions(+), 1157 deletions(-)
  create mode 100644 src/marker-vector.c
  create mode 100644 src/marker-vector.h
  create mode 100644 src/text-index.c
@@ -187,7 +187,7 @@ index b04d468ad2a..8ded4854bb5 100644
  
  NO_INLINE /* For better stack traces */
 diff --git a/src/buffer.c b/src/buffer.c
-index ab070f6d5cd..31b34fd3d64 100644
+index e1bd332ef56..4cd381813f0 100644
 --- a/src/buffer.c
 +++ b/src/buffer.c
 @@ -44,6 +44,7 @@ Copyright (C) 1985-2026 Free Software Foundation, Inc.
@@ -293,7 +293,7 @@ index ab070f6d5cd..31b34fd3d64 100644
        XMARKER (BVAR (b, zv_marker))->insertion_type = 1;
      }
    else
-@@ -2084,8 +2082,6 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+@@ -2086,8 +2084,6 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
       insisted on circular lists) so allow quitting here.  */
    frames_discard_buffer (buffer);
  
@@ -302,38 +302,38 @@ index ab070f6d5cd..31b34fd3d64 100644
    tem = Vinhibit_quit;
    Vinhibit_quit = Qt;
    /* Once the buffer is removed from Vbuffer_alist, its undo_list field is
-@@ -2103,27 +2099,12 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+@@ -2105,27 +2101,12 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
        /* Unchain all markers that belong to this indirect buffer.
  	 Don't unchain the markers that belong to the base buffer
  	 or its other indirect buffers.  */
 -#ifdef HAVE_MPS
 -      DO_MARKERS (b, m)
-+      FOR_EACH_MARKER (b, m)
- 	{
- 	  if (m->buffer == b)
+-	{
+-	  if (m->buffer == b)
 -	    igc_remove_marker (b, m);
-+	    marker_vector_remove (XVECTOR (BUF_MARKERS (b)), m);
- 	}
+-	}
 -      END_DO_MARKERS;
 -#else
 -      struct Lisp_Marker **mp = &BUF_MARKERS (b);
 -      struct Lisp_Marker *m;
 -      while ((m = *mp))
--	{
--	  if (m->buffer == b)
++      FOR_EACH_MARKER (b, m)
+ 	{
+ 	  if (m->buffer == b)
 -	    {
 -	      m->buffer = NULL;
 -	      *mp = m->next;
 -	    }
 -	  else
 -	    mp = &m->next;
--	}
++	    marker_vector_remove (XVECTOR (BUF_MARKERS (b)), m);
+ 	}
 - #endif
 +
       /* Intervals should be owned by the base buffer (Bug#16502).  */
        i = buffer_intervals (b);
        if (i)
-@@ -2137,18 +2118,7 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+@@ -2139,18 +2120,7 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
      {
        /* Unchain all markers of this buffer and its indirect buffers.
  	 and leave them pointing nowhere.  */
@@ -353,7 +353,7 @@ index ab070f6d5cd..31b34fd3d64 100644
        set_buffer_intervals (b, NULL);
  
        /* Perhaps we should explicitly free the interval tree here...  */
-@@ -2198,6 +2168,8 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
+@@ -2200,6 +2170,8 @@ DEFUN ("kill-buffer", Fkill_buffer, Skill_buffer, 0, 1, "bKill buffer: ",
        free_region_cache (b->bidi_paragraph_cache);
        b->bidi_paragraph_cache = 0;
      }
@@ -362,7 +362,7 @@ index ab070f6d5cd..31b34fd3d64 100644
    bset_width_table (b, Qnil);
    unblock_input ();
  
-@@ -2679,7 +2651,7 @@ #define swapfield_(field, type) \
+@@ -2681,7 +2653,7 @@ #define swapfield_(field, type) \
    other_buffer->text->end_unchanged = other_buffer->text->gpt;
    swap_buffer_overlays (current_buffer, other_buffer);
    {
@@ -371,7 +371,7 @@ index ab070f6d5cd..31b34fd3d64 100644
        {
  	if (m->buffer == other_buffer)
  	  m->buffer = current_buffer;
-@@ -2688,8 +2660,7 @@ #define swapfield_(field, type) \
+@@ -2690,8 +2662,7 @@ #define swapfield_(field, type) \
  	     BUF_MARKERS(buf) should either be for `buf' or dead.  */
  	  eassert (!m->buffer);
        }
@@ -381,7 +381,7 @@ index ab070f6d5cd..31b34fd3d64 100644
        {
  	if (m->buffer == current_buffer)
  	  m->buffer = other_buffer;
-@@ -2698,8 +2669,8 @@ #define swapfield_(field, type) \
+@@ -2700,8 +2671,8 @@ #define swapfield_(field, type) \
  	     BUF_MARKERS(buf) should either be for `buf' or dead.  */
  	  eassert (!m->buffer);
        }
@@ -391,7 +391,7 @@ index ab070f6d5cd..31b34fd3d64 100644
    { /* Some of the C code expects that both window markers of a
         live window points to that window's buffer.  So since we
         just swapped the markers between the two buffers, we need
-@@ -2761,9 +2732,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+@@ -2763,9 +2734,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
  current buffer is cleared.  */)
    (Lisp_Object flag)
  {
@@ -401,7 +401,7 @@ index ab070f6d5cd..31b34fd3d64 100644
    Lisp_Object btail, other;
    ptrdiff_t begv, zv;
    bool narrowed = (BEG != BEGV || Z != ZV);
-@@ -2781,9 +2749,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+@@ -2783,9 +2751,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
       instead.  */
    bset_undo_list (current_buffer, Qt);
  
@@ -411,34 +411,53 @@ index ab070f6d5cd..31b34fd3d64 100644
    if (NILP (flag))
      begv = BEGV_BYTE, zv = ZV_BYTE;
    else
-@@ -2812,11 +2777,11 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+@@ -2806,6 +2771,14 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+       set_intervals_multibyte (false);
+       set_overlays_multibyte (false);
+ 
++      /* Likewise, convert markers while CHAR_TO_BYTE still uses the
++	 multibyte correspondences.  */
++      FOR_EACH_MARKER (current_buffer, tail)
++	{
++	  const ptrdiff_t bytepos = marker_vector_bytepos (tail);
++	  marker_vector_set_charpos (tail, bytepos);
++	}
++
+       bset_enable_multibyte_characters (current_buffer, Qnil);
+ 
+       Z = Z_BYTE;
+@@ -2814,12 +2787,6 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
        GPT = GPT_BYTE;
        TEMP_SET_PT_BOTH (PT_BYTE, PT_BYTE);
  
 -      DO_MARKERS (current_buffer, tail)
-+      FOR_EACH_MARKER (current_buffer, tail)
- 	{
+-	{
 -	  tail->charpos = tail->bytepos;
-+	  const ptrdiff_t bytepos = marker_vector_bytepos (tail);
-+	  marker_vector_set_charpos (tail, bytepos);
- 	}
+-	}
 -      END_DO_MARKERS;
- 
+-
        /* Convert multibyte form of 8-bit characters to unibyte.  */
        pos = BEG;
-@@ -2966,38 +2931,13 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
+       stop = GPT;
+@@ -2968,37 +2935,14 @@ DEFUN ("set-buffer-multibyte", Fset_buffer_multibyte, Sset_buffer_multibyte,
  	TEMP_SET_PT_BOTH (position, byte);
        }
  
 -#ifdef HAVE_MPS
 -      DO_MARKERS (current_buffer, tail)
--	{
++      FOR_EACH_MARKER (current_buffer, tail)
+ 	{
 -	  Lisp_Object buf_markers = BUF_MARKERS (current_buffer);
 -	  BUF_MARKERS (current_buffer) = Qnil;
 -	  tail->bytepos = advance_to_char_boundary (tail->bytepos);
 -	  tail->charpos = BYTE_TO_CHAR (tail->bytepos);
 -	  BUF_MARKERS (current_buffer) = buf_markers;
--	}
++	  /* Markers still hold their unibyte positions, which are
++	     the new byte positions; don't map them as charpos.  */
++	  ptrdiff_t bytepos = marker_vector_charpos (tail);
++	  bytepos = advance_to_char_boundary (bytepos);
++	  marker_vector_set_charpos (tail, BYTE_TO_CHAR (bytepos));
+ 	}
 -      END_DO_MARKERS;
 -#else
 -      tail = markers = BUF_MARKERS (current_buffer);
@@ -449,15 +468,11 @@ index ab070f6d5cd..31b34fd3d64 100644
 -      BUF_MARKERS (current_buffer) = NULL;
 -
 -      for (; tail; tail = tail->next)
-+      FOR_EACH_MARKER (current_buffer, tail)
- 	{
+-	{
 -	  tail->bytepos = advance_to_char_boundary (tail->bytepos);
 -	  tail->charpos = BYTE_TO_CHAR (tail->bytepos);
-+	  ptrdiff_t bytepos = marker_vector_bytepos (tail);
-+	  bytepos = advance_to_char_boundary (bytepos);
-+	  marker_vector_set_charpos (tail, BYTE_TO_CHAR (bytepos));
- 	}
- 
+-	}
+-
 -      /* Make sure no markers were put on the chain
 -	 while the chain value was incorrect.  */
 -      if (BUF_MARKERS (current_buffer))
@@ -465,10 +480,9 @@ index ab070f6d5cd..31b34fd3d64 100644
 -
 -      BUF_MARKERS (current_buffer) = markers;
 -#endif
--
+ 
        /* Do this last, so it can calculate the new correspondences
  	 between chars and bytes.  */
-       /* FIXME: Is it worth the trouble, really?  Couldn't we just throw
 diff --git a/src/buffer.h b/src/buffer.h
 index 104b8dcad38..d48e2ad19ca 100644
 --- a/src/buffer.h

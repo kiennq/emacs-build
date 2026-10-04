@@ -29,7 +29,7 @@ jobs:
           commit=`git rev-parse --short=8 HEAD`
           full_commit=`git rev-parse HEAD`
           major_ver=`cat configure.ac | grep -Po 'AC_INIT\(.*\[\K\d+'`
-          version=`echo ${major_ver}.${{ github.run_number }}.${ts}.${commit}`
+          version=`echo ${major_ver}.${{ github.run_number }}.${ts}+${commit}`
 
           echo "commit=${commit}" >> $GITHUB_ENV
           echo "full_commit=${full_commit}" >> $GITHUB_ENV

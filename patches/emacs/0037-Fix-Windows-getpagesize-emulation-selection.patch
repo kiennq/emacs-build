@@ -1,0 +1,30 @@
+From ba4f1093ca347f794709d20e6fe8821c711556d1 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Sun, 11 Oct 2026 02:00:42 -0700
+Subject: [PATCH] Fix Windows getpagesize emulation selection
+
+The target C library check cannot see Emacs's own Windows
+implementation.  Mark it available so the fallback macro does not
+collide with the declaration when Windows headers are re-included.
+
+* nt/inc/ms-w32.h (HAVE_GETPAGESIZE): Define for the Windows
+implementation supplied by w32heap.c.
+---
+ nt/inc/ms-w32.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/nt/inc/ms-w32.h b/nt/inc/ms-w32.h
+index 42fce13502f..f4e3c4dda9e 100644
+--- a/nt/inc/ms-w32.h
++++ b/nt/inc/ms-w32.h
+@@ -469,6 +469,10 @@ extern free_fn the_free_fn;
+ extern int sys_putenv (char *);
+ 
+ extern int getloadavg (double *, int);
++/* Emacs supplies getpagesize in w32heap.c, regardless of the C library.  */
++#ifndef HAVE_GETPAGESIZE
++#define HAVE_GETPAGESIZE 1
++#endif
+ extern int getpagesize (void);
+ 
+ extern void * memrchr (void const *, int, size_t);

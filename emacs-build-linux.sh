@@ -90,7 +90,7 @@ install_dependencies() {
     "${elevate[@]}" apt-get update
     "${elevate[@]}" apt-get install -y --no-install-recommends \
         autoconf automake binutils build-essential ca-certificates curl file \
-        gcc-14 git libgccjit-14-dev libgif-dev libgnutls28-dev \
+        gcc-14 git libgccjit-14-dev libgif-dev libgnutls28-dev libgtk-3-dev \
         libharfbuzz-dev libjpeg-dev libncurses-dev libpng-dev \
         librsvg2-dev libtiff-dev libwebp-dev \
         libxaw7-dev libxml2-dev libxpm-dev libxt-dev patchelf pkg-config texinfo
@@ -215,8 +215,8 @@ cd "$source_dir"
 ./autogen.sh
 CC=gcc-14 CFLAGS="-O2 -fno-semantic-interposition" ./configure \
     --prefix=/usr \
-    --with-native-compilation --with-tree-sitter --with-x-toolkit=lucid \
-    --with-sound=no --without-gpm --without-dbus \
+    --with-native-compilation --with-tree-sitter \
+    --with-pgtk --with-sound=no --without-gpm --without-dbus \
     --without-pop --without-mailutils --without-gsettings \
     "${configure_options[@]}"
 make -j"$(nproc)"
@@ -279,7 +279,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 "$bundle" --batch -Q \
                          (libxml-available-p)
                          (string-match-p "MPS" system-configuration-features)
                          (string-match-p "RSVG" system-configuration-features)
-                         (string-match-p "LUCID" system-configuration-features))
+                         (string-match-p "PGTK" system-configuration-features))
                (kill-emacs 1))' \
     --eval '(let ((source (make-temp-file "appimage-native-" nil ".el"
                                          ";;; -*- lexical-binding: t; -*-\n(defun appimage-native-smoke (x) (+ x 1))"))

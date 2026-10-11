@@ -22,7 +22,8 @@ On Windows, there are two ways to invoke the build:
 
 ### Linux AppImage
 
-The Linux CI release builds on Ubuntu 24.04 and publishes an x86_64 AppImage
+The Linux CI release uses GTK3-based PGTK, builds on Ubuntu 24.04, and
+publishes an x86_64 AppImage
 named `emacs_<eight-character-source-hash>_<build-triplet>.AppImage`.
 It runs without a Flatpak sandbox, so Emacs can invoke host tools such
 as `git`.

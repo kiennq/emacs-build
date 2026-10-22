@@ -1,0 +1,171 @@
+From c04b40e3b736a4248064e37818a1460936a15a16 Mon Sep 17 00:00:00 2001
+From: Kien Nguyen <kien.n.quang@gmail.com>
+Date: Thu, 22 Oct 2026 12:23:23 -0700
+Subject: [PATCH] Initialize COM once per thread on MS-Windows
+
+Without COM initialized on the main thread, the shell initializes and
+uninitializes COM around each call such as ShellExecuteEx.  The final
+CoUninitialize unloads every DLL the thread loaded, including shell
+extensions whose worker threads may still be starting; those threads
+then crash running code from an unloaded DLL.  Initialize COM on the
+main thread once, as Microsoft requires for callers of shell APIs, and
+keep it until Emacs exits.  Likewise initialize OLE once on the input
+thread instead of for each new frame, which also removes the
+unbalanced CoUninitialize on WM_DESTROY.
+
+* src/w32fns.c (w32_uninitialize_com): New function.
+(globals_of_w32fns): Initialize COM on the main thread.
+(w32_msg_worker): Initialize OLE once for the thread, and
+uninitialize it when the message loop exits.
+(w32_msg_pump): Don't initialize OLE for each new frame.
+(w32_wnd_proc): Don't uninitialize COM on WM_DESTROY.
+(Fw32_badge, Fw32_progress_indicator): Don't initialize COM.
+* src/w32common.h (w32_uninitialize_com): Declare.
+* src/emacs.c (shut_down_emacs): Uninitialize COM on normal exit.
+---
+ src/emacs.c     |  7 +++++++
+ src/w32common.h |  4 ++++
+ src/w32fns.c    | 47 ++++++++++++++++++++++++++++++++++++-----------
+ 3 files changed, 47 insertions(+), 11 deletions(-)
+
+diff --git a/src/emacs.c b/src/emacs.c
+index 6dd575a84abb..7ef1da2035e3 100644
+--- a/src/emacs.c
++++ b/src/emacs.c
+@@ -3209,6 +3209,13 @@ shut_down_emacs (int sig, Lisp_Object stuff)
+ #ifdef WINDOWSNT
+   term_ntproc (0);
+ #endif
++
++#ifdef HAVE_NTGUI
++  /* Fatal errors can arrive here in a broken state, where unloading
++     DLLs is unsafe; release COM only on a normal exit.  */
++  if (sig == 0 || sig == SIGTERM)
++    w32_uninitialize_com ();
++#endif
+ }
+ 
+ 
+diff --git a/src/w32common.h b/src/w32common.h
+index 991dd35e323f..bc0c5819d659 100644
+--- a/src/w32common.h
++++ b/src/w32common.h
+@@ -100,4 +100,8 @@ #define LOAD_DLL_FN_OPT(lib, func)                                      \
+ extern bool hbfont_init_w32_funcs (HMODULE);
+ #endif
+ 
++#ifdef HAVE_NTGUI
++extern void w32_uninitialize_com (void);
++#endif
++
+ #endif /* W32COMMON_H */
+diff --git a/src/w32fns.c b/src/w32fns.c
+index 30f8f3e66d18..1b765f37992b 100644
+--- a/src/w32fns.c
++++ b/src/w32fns.c
+@@ -3729,14 +3729,6 @@ w32_msg_pump (deferred_msg * msg_buf)
+ 	      /* Produced by complete_deferred_msg; just ignore.  */
+ 	      break;
+ 	    case WM_EMACS_CREATEWINDOW:
+-	      /* Initialize COM for this window.  Needed for RegisterDragDrop.
+-		 Some third party shell extensions can cause it to be used in
+-		 system dialogs, which causes a crash if it is not initialized.
+-		 This is a known bug in Windows, which was fixed long ago, but
+-		 the patch for XP is not publicly available until XP SP3,
+-		 and older versions will never be patched.  */
+-	      OleInitialize (NULL);
+-
+ 	      w32_createwindow ((struct frame *) msg.wParam,
+ 				(int *) msg.lParam);
+ 	      if (!PostThreadMessage (dwMainThreadId, WM_EMACS_DONE, 0, 0))
+@@ -3953,6 +3945,12 @@ w32_msg_worker (void *arg)
+ 
+   PeekMessage (&msg, NULL, 0, 0, PM_NOREMOVE);
+ 
++  /* Initialize OLE once for this thread, which owns the frame windows;
++     RegisterDragDrop needs it.  Keep it initialized until the thread
++     exits, so DLLs loaded on this thread are not unloaded while still
++     in use.  */
++  bool ole_initialized = SUCCEEDED (OleInitialize (NULL));
++
+   if (!PostThreadMessage (dwMainThreadId, WM_EMACS_DONE, 0, 0))
+     emacs_abort ();
+ 
+@@ -3964,6 +3962,9 @@ w32_msg_worker (void *arg)
+      application quits.  */
+   w32_msg_pump (&dummy_buf);
+ 
++  if (ole_initialized)
++    OleUninitialize ();
++
+ #ifdef HAVE_MPS
+   w32_remove_non_lisp_thread (igc_thr);
+ #endif
+@@ -5774,7 +5775,6 @@ #define WM_TOUCH 576
+       maybe_pass_notification (hwnd);
+       remove_w32_kbdhook ();
+ #endif
+-      CoUninitialize ();
+       return 0;
+ 
+ #ifdef WINDOWSNT
+@@ -11115,7 +11115,6 @@ DEFUN ("w32-badge",
+   if (hwnd == NULL)
+     return Qnil;
+ 
+-  CoInitialize (NULL);
+   ITaskbarList3 *task_bar_list = NULL;
+   HRESULT r = CoCreateInstance (&CLSID_TaskbarList,
+ 				NULL,
+@@ -11356,7 +11355,6 @@ DEFUN ("w32-progress-indicator",
+   if (hwnd == NULL)
+     return Qnil;
+ 
+-  CoInitialize (NULL);
+   ITaskbarList3 *task_bar_list = NULL;
+   HRESULT r = CoCreateInstance(&CLSID_TaskbarList,
+ 			       NULL,
+@@ -12367,6 +12365,22 @@ #define _open open
+ 
+ /* Initialization.  */
+ 
++/* The thread on which globals_of_w32fns initialized COM, or 0.  */
++static DWORD com_thread_id;
++
++/* Balance the COM initialization done by globals_of_w32fns.  Called
++   when Emacs exits normally.  COM must be uninitialized on the thread
++   that initialized it, so do nothing on any other thread.  */
++void
++w32_uninitialize_com (void)
++{
++  if (com_thread_id && com_thread_id == GetCurrentThreadId ())
++    {
++      com_thread_id = 0;
++      CoUninitialize ();
++    }
++}
++
+ /*
+ 	globals_of_w32fns is used to initialize those global variables that
+ 	must always be initialized on startup even when the global variable
+@@ -12380,6 +12394,17 @@ globals_of_w32fns (void)
+ {
+   HMODULE user32_lib = GetModuleHandle ("user32.dll");
+   HMODULE kernel32_lib = GetModuleHandle ("kernel32.dll");
++
++  /* Initialize COM once on the main thread, as Microsoft requires for
++     callers of ShellExecute and other shell APIs.  Keep it initialized
++     until Emacs exits: otherwise the shell initializes COM around each
++     call, and the final CoUninitialize unloads every DLL the thread
++     loaded, including shell extensions whose worker threads may still
++     be starting.  */
++  if (SUCCEEDED (CoInitializeEx (NULL, (COINIT_APARTMENTTHREADED
++					| COINIT_DISABLE_OLE1DDE))))
++    com_thread_id = GetCurrentThreadId ();
++
+   /*
+     TrackMouseEvent not available in all versions of Windows, so must load
+     it dynamically.  Do it once, here, instead of every time it is used.
+-- 
+2.55.0.windows.5
+

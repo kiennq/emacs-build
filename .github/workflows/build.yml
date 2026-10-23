@@ -53,10 +53,6 @@ jobs:
         include:
           - os: windows-2025
             shell: powershell
-            msystem: MINGW64
-            build_options: --without-mps
-          - os: windows-2025
-            shell: powershell
             msystem: UCRT64
             build_options: --variant mps --with-mps --no-strip --enable-build-details
           - os: windows-11-arm
